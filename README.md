@@ -1,125 +1,127 @@
-# Web_Scan - 3D Gaussian Splatting Web 平台
+# Web_Scan — A Web Workbench for 3D Gaussian Splatting
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue.svg) ![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-red.svg) ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-## 项目概述
+English | [简体中文](README_zh-CN.md)
 
-**Web_Scan** 是一个面向 3D Gaussian Splatting 算法的 Web 工作台，提供统一的数据上传、远程训练、日志监控、结果下载、PLY 快速加载和交互式结果查看流程。
+## Project Overview
 
-平台采用前后端轻量架构：浏览器负责操作界面和结果展示，Python API 服务负责数据物化、任务编排、SSH/SFTP 远程执行和结果回传。算法环境不在 README 中展开手动配置细节，统一通过各算法目录下的 `setup_env.sh` 完成。
+**Web_Scan** is a web workbench for 3D Gaussian Splatting (3DGS) algorithms. It provides a unified workflow covering data upload, remote training, log monitoring, result download, fast PLY loading, and interactive result inspection.
 
-## 核心能力
+The platform uses a lightweight front/back-end architecture: the browser hosts the operation UI and result display, while a Python API service handles data materialization, job orchestration, SSH/SFTP remote execution, and result retrieval. Algorithm environments are not configured manually — they are set up uniformly with the `setup_env.sh` script inside each algorithm directory.
 
-- **多算法接入**：通过适配器配置统一管理训练、渲染、压缩和评估任务。
-- **Web 数据流**：支持图片上传、相机采集、远程数据复用和 COLMAP 预处理。
-- **远程训练**：通过 SSH/SFTP 下发任务，支持 `tmux` 后台运行和结果自动下载。
-- **实时监控**：展示任务状态、训练日志、Loss、PSNR、迭代数、FPS 等指标。
-- **结果查看**：支持 PLY 快速加载、交互式 3D 浏览、结果包导出和指标分析。
+## Key Features
 
-## Web 界面截图
+- **Multi-algorithm support**: training, rendering, compression, and evaluation tasks are managed uniformly through adapter configurations.
+- **Web data flow**: image upload, camera capture, remote data reuse, and COLMAP preprocessing.
+- **Remote training**: jobs are dispatched over SSH/SFTP, run in the background with `tmux`, and results are downloaded automatically.
+- **Live monitoring**: job status, training logs, loss, PSNR, iteration count, FPS, and other metrics.
+- **Result inspection**: fast PLY loading, interactive 3D browsing, result bundle export, and metric analysis.
 
-截图文件位于 [`web照片/`](web照片/)。
+## Web UI Screenshots
 
-| 总览工作台 | 数据源配置 |
+Screenshots are located in [`web照片/`](web照片/).
+
+| Workbench overview | Data source configuration |
 |---|---|
-| ![Web-GSC总览工作台](<web照片/截屏2026-05-19 13.38.15.png>) | ![远程数据源与连接配置](<web照片/截屏2026-05-19 13.38.29.png>) |
+| ![Web-GSC workbench overview](<web照片/截屏2026-05-19 13.38.15.png>) | ![Remote data source and connection configuration](<web照片/截屏2026-05-19 13.38.29.png>) |
 
-| 新图片上传 | 远程训练命令预览 |
+| New image upload | Remote training command preview |
 |---|---|
-| ![新图片上传和相机采集](<web照片/截屏2026-05-19 13.38.44.png>) | ![算法训练配置与远程预检](<web照片/截屏2026-05-19 13.38.59.png>) |
+| ![New image upload and camera capture](<web照片/截屏2026-05-19 13.38.44.png>) | ![Algorithm training configuration and remote precheck](<web照片/截屏2026-05-19 13.38.59.png>) |
 
-| 日志与指标 | 交互式结果浏览 |
+| Logs and metrics | Interactive result browsing |
 |---|---|
-| ![训练日志和实时指标](<web照片/截屏2026-05-19 13.39.06.png>) | ![3D结果浏览器](<web照片/截屏2026-05-19 13.39.29.png>) |
+| ![Training logs and live metrics](<web照片/截屏2026-05-19 13.39.06.png>) | ![3D result browser](<web照片/截屏2026-05-19 13.39.29.png>) |
 
-| 训练指标分析 |
+| Training metric analysis |
 |---|
-| ![PSNR、SSIM、LPIPS与模型大小分析](<web照片/截屏2026-05-19 13.39.37.png>) |
+| ![PSNR, SSIM, LPIPS, and model size analysis](<web照片/截屏2026-05-19 13.39.37.png>) |
 
-## 支持的算法
+## Supported Algorithms
 
-| 算法 | 主要用途 | 环境脚本 |
+| Algorithm | Main Use | Setup Script |
 |---|---|---|
-| **HAC++** | 高压缩率 Gaussian 表示与压缩评估 | `HAC-plus-main/setup_env.sh` |
-| **ContextGS** | 上下文建模与压缩 | `ContextGS-main/setup_env.sh` |
-| **CompGS** | 率失真优化压缩 | `CompGS-main/setup_env.sh` |
-| **GaussianPro** | 渐进传播训练，适合纹理缺失场景 | `GaussianPro-version1.0/setup_env.sh` |
-| **GSLightning** | PyTorch Lightning 训练框架 | `gaussian-splatting-lightning-main/setup_env.sh` |
-| **MEGS-2** | 内存高效 Gaussian 表示 | `MEGS-2-main/setup_env.sh` |
-| **reduced-3dgs** | 降低显存和存储占用 | `reduced-3dgs-main/setup_env.sh` |
-| **AtomGS** | 原子化 Gaussian 表示 | `AtomGS-main/setup_env.sh` |
+| **HAC++** | High-compression Gaussian representation and compression evaluation | `HAC-plus-main/setup_env.sh` |
+| **ContextGS** | Context modeling and compression | `ContextGS-main/setup_env.sh` |
+| **CompGS** | Rate–distortion optimized compression | `CompGS-main/setup_env.sh` |
+| **GaussianPro** | Progressive propagation training, suited to texture-poor scenes | `GaussianPro-version1.0/setup_env.sh` |
+| **GSLightning** | PyTorch Lightning training framework | `gaussian-splatting-lightning-main/setup_env.sh` |
+| **MEGS-2** | Memory-efficient Gaussian representation | `MEGS-2-main/setup_env.sh` |
+| **reduced-3dgs** | Reduced VRAM and storage footprint | `reduced-3dgs-main/setup_env.sh` |
+| **AtomGS** | Atomized Gaussian representation | `AtomGS-main/setup_env.sh` |
 
-## 项目结构
+## Project Structure
 
 ```text
 Web_Scan/
-├── web/                                  # Web 应用核心代码
-│   ├── index.html                       # 主页面入口
-│   ├── styles.css                       # 页面样式
-│   ├── src/                             # 前端模块
-│   ├── server/                          # Python API 服务
-│   ├── tools/                           # 数据处理、导出和测试工具
-│   ├── config/                          # 算法适配器配置
-│   ├── scenes/                          # 示例场景
-│   └── viewers/                         # 结果查看器
-├── web照片/                              # README 使用的界面截图
-├── HAC-plus-main/                       # HAC++ 算法目录
-├── ContextGS-main/                      # ContextGS 算法目录
-├── CompGS-main/                         # CompGS 算法目录
-├── GaussianPro-version1.0/              # GaussianPro 算法目录
-├── gaussian-splatting-lightning-main/   # GSLightning 算法目录
-├── MEGS-2-main/                         # MEGS-2 算法目录
-├── reduced-3dgs-main/                   # reduced-3dgs 算法目录
-└── AtomGS-main/                         # AtomGS 算法目录
+├── web/                                  # Web application core
+│   ├── index.html                       # Main page entry
+│   ├── styles.css                       # Page styles
+│   ├── src/                             # Front-end modules
+│   ├── server/                          # Python API service
+│   ├── tools/                           # Data processing, export, and test tools
+│   ├── config/                          # Algorithm adapter configurations
+│   ├── scenes/                          # Example scenes
+│   └── viewers/                         # Result viewers
+├── web照片/                              # UI screenshots used by the README
+├── HAC-plus-main/                       # HAC++ algorithm directory
+├── ContextGS-main/                      # ContextGS algorithm directory
+├── CompGS-main/                         # CompGS algorithm directory
+├── GaussianPro-version1.0/              # GaussianPro algorithm directory
+├── gaussian-splatting-lightning-main/   # GSLightning algorithm directory
+├── MEGS-2-main/                         # MEGS-2 algorithm directory
+├── reduced-3dgs-main/                   # reduced-3dgs algorithm directory
+└── AtomGS-main/                         # AtomGS algorithm directory
 ```
 
-## 运行环境
+## Requirements
 
-### 本地 Web 服务
+### Local Web Service
 
-| 项目 | 要求 |
+| Item | Requirement |
 |---|---|
-| 操作系统 | macOS / Linux / Windows + WSL |
+| OS | macOS / Linux / Windows + WSL |
 | Python | Python 3.10 |
-| 浏览器 | Chrome / Edge / Safari / Firefox 现代版本 |
-| Python 依赖 | `flask`、`paramiko`、`numpy` |
-| 可选工具 | `COLMAP`、`ImageMagick`/`magick`、`nvidia-smi` |
-| 默认地址 | `http://127.0.0.1:8080/web/` |
+| Browser | Current versions of Chrome / Edge / Safari / Firefox |
+| Python packages | `flask`, `paramiko`, `numpy` |
+| Optional tools | `COLMAP`, `ImageMagick`/`magick`, `nvidia-smi` |
+| Default address | `http://127.0.0.1:8080/web/` |
 
-本地只运行 Web 界面、上传、任务编排和结果查看时，不强制要求 NVIDIA GPU。若在本机直接训练，需要安装对应算法的 CUDA、PyTorch 和扩展依赖。
+The local machine only runs the web UI, uploads, job orchestration, and result viewing — no NVIDIA GPU is required. If you want to train locally, install the CUDA toolkit, PyTorch, and extension dependencies of the target algorithm.
 
-### 远程训练服务器
+### Remote Training Server
 
-| 项目 | 要求 |
+| Item | Requirement |
 |---|---|
-| 系统 | Linux |
+| OS | Linux |
 | Python | Python 3.10 |
-| GPU | NVIDIA GPU，建议 16GB+ 显存；大场景建议 24GB+ |
-| CUDA / PyTorch | 由目标算法的 `setup_env.sh` 安装或校验 |
-| 执行工具 | SSH/SFTP、`tmux`、`xvfb-run` |
-| 存储 | 至少 50GB 可用空间；多任务或大场景建议 SSD 500GB+ |
+| GPU | NVIDIA GPU, 16GB+ VRAM recommended; 24GB+ for large scenes |
+| CUDA / PyTorch | Installed or verified by the algorithm's `setup_env.sh` |
+| Execution tools | SSH/SFTP, `tmux`, `xvfb-run` |
+| Storage | At least 50GB free; SSD 500GB+ recommended for multi-task or large scenes |
 
-### HAC++ 额外依赖：tmc3
+### Extra Dependency for HAC++: tmc3
 
-HAC++ 的 GPCC 压缩链路会调用 `tmc3`。运行 HAC++ 前请在训练服务器安装 MPEG PCC TMC13，并确保 `tmc3` 可直接执行：
+The GPCC compression path of HAC++ calls `tmc3`. Before running HAC++, install MPEG PCC TMC13 on the training server and make sure `tmc3` is directly executable:
 
 ```bash
 which tmc3
 tmc3 --help
 ```
 
-如果 `which tmc3` 没有输出，需要把 `tmc3` 可执行文件所在目录加入 `PATH`，或在运行环境中设置对应的 GPCC 编码器路径。
+If `which tmc3` prints nothing, add the directory containing the `tmc3` executable to `PATH`, or set the GPCC encoder path in the runtime environment.
 
-## 环境配置脚本
+## Environment Setup Scripts
 
-每个算法目录都提供 `setup_env.sh`。进入目标算法目录后运行脚本即可配置对应的 Python 3.10 Conda 环境和 CUDA 扩展：
+Every algorithm directory ships with a `setup_env.sh`. Enter the target algorithm directory and run the script to provision the corresponding Python 3.10 Conda environment and CUDA extensions:
 
 ```bash
 cd HAC-plus-main
 bash setup_env.sh
 ```
 
-也可以从仓库根目录直接运行：
+You can also run them from the repository root:
 
 ```bash
 bash HAC-plus-main/setup_env.sh
@@ -132,118 +134,118 @@ bash reduced-3dgs-main/setup_env.sh
 bash AtomGS-main/setup_env.sh
 ```
 
-脚本默认需要可用的 Conda 或 Mamba。若服务器没有自动加载 Conda，请先执行类似命令：
+The scripts expect a working Conda or Mamba installation. If Conda is not loaded automatically on the server, run a command such as:
 
 ```bash
 source /path/to/miniconda3/etc/profile.d/conda.sh
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 安装 Web 服务依赖
+### 1. Install the Web Service Dependencies
 
 ```bash
 python3.10 -m pip install flask paramiko numpy
 ```
 
-### 2. 启动 API 和静态服务
+### 2. Start the API and Static Services
 
 ```bash
 python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ```
 
-### 3. 打开 Web 页面
+### 3. Open the Web Page
 
 ```text
 http://127.0.0.1:8080/web/
 ```
 
-### 4. 首次运行流程
+### 4. First-Run Workflow
 
-1. 在 `Data` 中选择 `New Image Upload` 上传图片，或选择已有远程数据。
-2. 在远程配置区域填写 Host、Port、Username、Password、Repo Path、Workspace Root 和 Output Root。
-3. 点击 `Remote Precheck`，确认 SSH、目录权限、Python、`tmux`、`xvfb-run` 等检查通过。
-4. 在 `Algorithms` 中选择算法和任务参数。
-5. 点击 `Submit Remote Job`，任务会在远程服务器后台执行。
-6. 在 `Logs and Metrics` 查看训练日志，在 `Browser` 查看回传后的 3D 结果。
+1. In `Data`, choose `New Image Upload` to upload images, or select existing remote data.
+2. In the remote configuration area, fill in Host, Port, Username, Password, Repo Path, Workspace Root, and Output Root.
+3. Click `Remote Precheck` and confirm that SSH, directory permissions, Python, `tmux`, `xvfb-run`, and other checks pass.
+4. In `Algorithms`, pick the algorithm and task parameters.
+5. Click `Submit Remote Job` — the job runs in the background on the remote server.
+6. Check training logs in `Logs and Metrics`, and view the returned 3D results in `Browser`.
 
-## 工作流
+## Workflow
 
 ```text
-图片上传 / 远程数据复用
+Image upload / remote data reuse
         |
         v
-数据物化与 COLMAP 预处理
+Data materialization & COLMAP preprocessing
         |
         v
-SSH/SFTP 上传 workspace
+SSH/SFTP workspace upload
         |
         v
-远程 tmux 后台训练
+Remote tmux background training
         |
         v
-结果下载与 PLY 物化
+Result download & PLY materialization
         |
         v
-Web 端交互式查看与指标分析
+Interactive web viewing & metric analysis
 ```
 
-## 常用操作
+## Common Operations
 
-### 快速加载已有 PLY
+### Quick-Load an Existing PLY
 
-无需重新训练，可直接在 Web 页面中选择 `Browser` 或 `Quick Load PLY` 加载本地 PLY 文件。也可以调用接口：
+No retraining needed: pick `Browser` or `Quick Load PLY` on the web page to load a local PLY file. You can also call the API:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/load-ply \
   -F "ply_file=@scene.ply"
 ```
 
-### 查看任务日志和指标
+### View Job Logs and Metrics
 
-Web 页面会展示日志尾部和指标表，也可以通过接口下载：
+The web page shows the log tail and the metrics table; the same data is available via API:
 
 ```text
 GET /api/jobs/<job_id>/logs/download
 GET /api/jobs/<job_id>/metrics.csv
 ```
 
-## 常见问题
+## Troubleshooting
 
-### Remote Precheck 失败
+### Remote Precheck Fails
 
-优先检查 SSH 是否可登录、远程目录是否存在且可写、算法目录是否完整、Conda 环境是否已通过 `setup_env.sh` 配置完成。
+First check that SSH login works, the remote directories exist and are writable, the algorithm directory is complete, and the Conda environment has been provisioned with `setup_env.sh`.
 
-### COLMAP 处理失败
+### COLMAP Fails
 
-确认 `colmap` 在本地或远程环境中可执行。上传数据建议至少 8-12 张清晰、多视角照片，避免强反光、动态物体、重复纹理和严重模糊。
+Make sure `colmap` is executable locally or in the remote environment. Uploaded data should contain at least 8–12 sharp, multi-view photos; avoid strong reflections, dynamic objects, repetitive textures, and severe blur.
 
-### HAC++ 压缩失败
+### HAC++ Compression Fails
 
-先检查 `tmc3`：
+Check `tmc3` first:
 
 ```bash
 which tmc3
 tmc3 --help
 ```
 
-若命令不可用，安装 MPEG PCC TMC13 后把 `tmc3` 加入 `PATH`，再重新提交 HAC++ 任务。
+If the command is unavailable, install MPEG PCC TMC13, add `tmc3` to `PATH`, and resubmit the HAC++ job.
 
-### PLY 加载空白
+### PLY Loads Blank
 
-检查 PLY 是否完整下载、文件大小是否异常、是否包含顶点数据，并尝试重新点击结果下载或重新加载 PLY。
+Check whether the PLY finished downloading, whether its file size looks sane, and whether it contains vertex data; then retry result download or reload the PLY.
 
-## 使用建议
+## Usage Tips
 
-- 首次测试用小数据集和默认参数，确认远程链路能完整跑通。
-- 数据集建议保持路径无空格，便于远程命令和日志排查。
-- 同一台 GPU 服务器不要同时提交过多任务，避免显存争抢。
-- 重要结果应从 `web/generated/runs/` 或远程输出目录单独备份。
+- For the first test, use a small dataset with default parameters to confirm the full remote path works.
+- Keep dataset paths free of spaces to simplify remote commands and log inspection.
+- Do not submit too many jobs at once to the same GPU server; VRAM contention degrades all of them.
+- Back up important results separately from `web/generated/runs/` or the remote output directory.
 
-## 许可证
+## License
 
-本项目遵循 MIT 许可证。各算法实现可能包含各自许可证，使用前请参考对应算法目录内的 LICENSE 文件。
+This project is released under the MIT license. Each integrated algorithm may carry its own license — see the LICENSE file in the corresponding algorithm directory before use.
 
-## 致谢
+## Acknowledgements
 
-感谢 3D Gaussian Splatting、COLMAP、PyTorch 以及各算法原作者和开源社区的贡献。
+Thanks to 3D Gaussian Splatting, COLMAP, PyTorch, and the original authors and open-source community behind each integrated algorithm.

@@ -7,6 +7,10 @@
 # 保留主目录下的 change.md
 !/change.md
 
+# 保留 README 及其中文备份
+!/README.md
+!/README_zh-CN.md
+
 # 保留 README 使用的截图
 !/web照片/
 !/web照片/**
