@@ -1364,11 +1364,11 @@ function renderDataSourceSelector() {
   return `
     <div class="source-choice-grid">
       <button class="source-choice ${state.useExistingRemoteDataset ? "" : "active"}" data-action="set-data-source" data-source="upload" type="button">
-        <strong>上传新图片</strong>
+        <strong>Upload New Images</strong>
         <span>Upload images, then optionally run COLMAP preprocessing.</span>
       </button>
       <button class="source-choice ${state.useExistingRemoteDataset ? "active" : ""}" data-action="set-data-source" data-source="existing" type="button">
-        <strong>使用已有远端数据</strong>
+        <strong>Use Existing Remote Data</strong>
         <span>Use the selected remote workspace directly; COLMAP is skipped.</span>
       </button>
     </div>
@@ -1697,7 +1697,7 @@ function renderCommandPreview() {
       <section class="panel pad">
         <div class="button-row" style="justify-content: space-between;">
           <h3>Command Review</h3>
-          <button type="button" disabled>修改</button>
+          <button type="button" disabled>Edit</button>
         </div>
         <p class="panel-copy">Generate a command preview after SSH precheck. Submission opens a custom confirmation dialog instead of the native browser confirm.</p>
       </section>
@@ -1716,8 +1716,8 @@ function renderCommandPreview() {
           ${preview.command_override ? `<span class="badge warn">Edited</span>` : `<span class="badge ok">Preview Ready</span>`}
           ${
             state.commandReviewEditing
-              ? `<button class="primary" data-action="confirm-command-edit" type="button">确定</button>`
-              : `<button data-action="edit-command" type="button">修改</button>`
+              ? `<button class="primary" data-action="confirm-command-edit" type="button">OK</button>`
+              : `<button data-action="edit-command" type="button">Edit</button>`
           }
         </div>
       </div>
