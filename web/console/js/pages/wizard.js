@@ -21,9 +21,9 @@ const TRAINING_DEFAULTS = {
 };
 
 const PRESETS = [
-  { id: "preview", label: "Quick preview", iterations: 3000, hint: "3k iterations — check the pipeline works, ~10 min" },
-  { id: "standard", label: "Standard", iterations: 30000, hint: "30k iterations — paper-quality run" },
-  { id: "custom", label: "Custom", iterations: 0, hint: "Set your own parameters" },
+  { id: "preview", labelKey: "wiz.presetPreview", hintKey: "wiz.presetPreviewHint", iterations: 3000 },
+  { id: "standard", labelKey: "wiz.presetStandard", hintKey: "wiz.presetStandardHint", iterations: 30000 },
+  { id: "custom", labelKey: "wiz.presetCustom", hintKey: "wiz.presetCustomHint", iterations: 0 },
 ];
 
 function newDraft() {
@@ -417,8 +417,8 @@ export default {
         <div class="grid-3" style="margin-top:16px">
           <button v-for="preset in PRESETS" :key="preset.id" class="choice" :class="{ selected: draft.preset === preset.id }"
                   style="padding:12px 14px" @click="applyPreset(preset.id)">
-            <div class="choice-title" style="font-size:var(--fs-sm)">{{ preset.label }}</div>
-            <div class="choice-desc">{{ preset.hint }}</div>
+            <div class="choice-title" style="font-size:var(--fs-sm)">{{ $t(preset.labelKey) }}</div>
+            <div class="choice-desc">{{ $t(preset.hintKey) }}</div>
           </button>
         </div>
 

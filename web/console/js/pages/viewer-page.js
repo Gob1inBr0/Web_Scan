@@ -8,8 +8,8 @@ import { loadPly, loadResult } from "../api.js";
 const { ref, computed, onMounted } = Vue;
 
 const DEMOS = [
-  { id: "demo-sh", label: "Sphere · SH", sub: "spherical-harmonics Gaussians", url: "/web/console/demo/sphere-sh.ply", fmt: "sh" },
-  { id: "demo-sg", label: "Sphere · SG", sub: "spherical-Gaussian Gaussians", url: "/web/console/demo/sphere-sg.ply", fmt: "sg" },
+  { id: "demo-sh", labelKey: "view.demoSh", subKey: "view.demoShSub", url: "/web/console/demo/sphere-sh.ply", fmt: "sh" },
+  { id: "demo-sg", labelKey: "view.demoSg", subKey: "view.demoSgSub", url: "/web/console/demo/sphere-sg.ply", fmt: "sg" },
 ];
 
 export default {
