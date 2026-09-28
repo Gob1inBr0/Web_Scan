@@ -17,6 +17,10 @@ LOGGER = logging.getLogger("webscan")
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT_DIR / "web"
+STREAM_DIR = WEB_DIR / "generated" / "streams"
+DATASET_DIR = WEB_DIR / "generated" / "datasets"
+WORKSPACE_DIR = WEB_DIR / "generated" / "workspaces"
+JOB_LOG_DIR = WEB_DIR / "generated" / "job_logs"
 
 MANUAL_ZH_URL = "/web/WEB_TRAINING_MANUAL_ZH.md"
 
@@ -139,6 +143,20 @@ def allowed_result_roots() -> list:
 
 def result_path_is_allowed(resolved: Path) -> bool:
   return any(path_is_inside(resolved, root) for root in allowed_result_roots())
+
+
+def safe_generated_child(root: Path, *parts: str) -> Path:
+  root_resolved = root.resolve()
+  candidate = root_resolved
+  for part in parts:
+    raw = str(part or "").strip()
+    if not raw:
+      continue
+    candidate = candidate / raw
+  candidate = candidate.resolve()
+  if root_resolved == candidate or root_resolved not in candidate.parents:
+    raise ValueError(f"Unsafe generated path: {candidate}")
+  return candidate
 
 
 def path_is_inside(path: Path, parent: Path) -> bool:

@@ -1305,9 +1305,10 @@ def test_remote_monitor_retries_transient_poll_errors() -> None:
   }
   calls: list[int] = []
   logs: list[str] = []
-  original_poll = api_server.poll_remote_detached_job
-  original_persist = api_server.persist_job_state
-  original_append = api_server.append_job_log_line
+  from web.server import jobs as jobs_module
+  original_poll = jobs_module.poll_remote_detached_job
+  original_persist = jobs_module.persist_job_state
+  original_append = jobs_module.append_job_log_line
   original_sleep = api_server.time.sleep
 
   def fake_poll(**kwargs):
@@ -1330,18 +1331,18 @@ def test_remote_monitor_retries_transient_poll_errors() -> None:
     }
 
   try:
-    api_server.poll_remote_detached_job = fake_poll
-    api_server.persist_job_state = lambda _job: None
-    api_server.append_job_log_line = lambda _job, _channel, line: logs.append(line)
+    jobs_module.poll_remote_detached_job = fake_poll
+    jobs_module.persist_job_state = lambda _job: None
+    jobs_module.append_job_log_line = lambda _job, _channel, line: logs.append(line)
     api_server.time.sleep = lambda _seconds: None
     api_server.start_remote_monitor_thread(job, remote_config())
     deadline = api_server.time.time() + 2
     while job.get("_monitoring") and api_server.time.time() < deadline:
       original_sleep(0.01)
   finally:
-    api_server.poll_remote_detached_job = original_poll
-    api_server.persist_job_state = original_persist
-    api_server.append_job_log_line = original_append
+    jobs_module.poll_remote_detached_job = original_poll
+    jobs_module.persist_job_state = original_persist
+    jobs_module.append_job_log_line = original_append
     api_server.time.sleep = original_sleep
 
   assert len(calls) == 3
