@@ -1701,8 +1701,10 @@ class ApiHandler(SimpleHTTPRequestHandler):
     return True
 
   def _serve_index_with_token(self) -> None:
+    console_entry = self.path.startswith("/web/console") or self.path == "/console"
+    html_path = WEB_DIR / "console" / "index.html" if console_entry else WEB_DIR / "index.html"
     try:
-      html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+      html = html_path.read_text(encoding="utf-8")
     except OSError:
       self.send_error(HTTPStatus.NOT_FOUND)
       return
@@ -1745,7 +1747,8 @@ class ApiHandler(SimpleHTTPRequestHandler):
     query = parse_qs(parsed.query)
     if not self._security_gate(require_api_token=parsed.path.startswith("/api/")):
       return
-    if parsed.path in ("/", "/index.html", "/web/", "/web/index.html"):
+    if parsed.path in ("/", "/index.html", "/web/", "/web/index.html",
+                       "/web/console", "/web/console/", "/web/console/index.html"):
       self._serve_index_with_token()
       return
     if parsed.path == "/api/health":

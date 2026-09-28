@@ -33,7 +33,7 @@ jobs:
       - name: Syntax-check frontend modules
         run: |
           mkdir -p /tmp/jscheck
-          for f in web/src/core/app.js web/src/api/server-client.js web/viewers/megs-viewer.js; do
-            cp "$f" "/tmp/jscheck/$(basename "$f" .js).mjs"
-            node --check "/tmp/jscheck/$(basename "$f" .js).mjs"
+          for f in web/src/core/app.js web/src/api/server-client.js web/viewers/megs-viewer.js $(find web/console/js -name '*.js'); do
+            cp "$f" "/tmp/jscheck/$(basename "$f" .js)-$(echo "$f" | md5sum | cut -c1-6).mjs"
+            node --check "/tmp/jscheck/$(basename "$f" .js)-$(echo "$f" | md5sum | cut -c1-6).mjs"
           done
