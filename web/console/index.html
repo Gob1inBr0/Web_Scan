@@ -12,9 +12,35 @@
 <body>
   <div id="app"></div>
   <script>window.__errors = [];
-    window.addEventListener("error", (e) => window.__errors.push(JSON.stringify({ msg: e.message, file: e.filename, line: e.lineno, col: e.colno, stack: e.error && String(e.error.stack || "").slice(0, 400) })));
-    window.addEventListener("unhandledrejection", (e) => window.__errors.push("promise: " + ((e.reason && e.reason.message) || e.reason)));</script>
+    window.addEventListener("error", (e) => {
+      const el = e.target;
+      if (el && el.tagName === "SCRIPT" && el.src) {
+        // Transient local-server hiccups can fail the entry module's first
+        // fetch; retry it once before giving up.
+        if (el.id === "app-entry" && !el.dataset.retried) {
+          el.dataset.retried = "1";
+          setTimeout(() => {
+            const clone = document.createElement("script");
+            clone.type = "module";
+            clone.src = el.src + (el.src.includes("?") ? "&" : "?") + "retry=" + Date.now();
+            document.body.appendChild(clone);
+          }, 400);
+          return;
+        }
+        window.__errors.push("resource failed: " + (el.src || "") + " " + (el.error && el.error.message || ""));
+        return;
+      }
+      window.__errors.push(JSON.stringify({ msg: e.message, file: e.filename, line: e.lineno, col: e.colno, stack: e.error && String(e.error.stack || "").slice(0, 400) }));
+    }, true);
+    window.addEventListener("unhandledrejection", (e) => window.__errors.push("promise: " + ((e.reason && e.reason.message) || e.reason)));
+    for (const level of ["error", "warn"]) {
+      const original = console[level].bind(console);
+      console[level] = (...args) => {
+        try { window.__errors.push(level + ": " + args.map((a) => (a && a.stack) ? String(a.stack).slice(0, 300) : String(a)).join(" ").slice(0, 400)); } catch { /* ignore */ }
+        original(...args);
+      };
+    }</script>
   <script src="./assets/vue.global.prod.js"></script>
-  <script type="module" src="./js/app.js"></script>
+  <script type="module" id="app-entry" src="./js/app.js"></script>
 </body>
 </html>

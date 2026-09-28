@@ -2,6 +2,7 @@
 // and quick-load of any local PLY path.
 
 import { store, navigate, toast } from "../store.js";
+import { t } from "../i18n.js";
 import { loadPly, loadResult } from "../api.js";
 
 const { ref, computed, onMounted } = Vue;
@@ -43,13 +44,13 @@ export default {
 
     function openDemo(demo) {
       mode.value = "scene";
-      activeLabel.value = demo.label;
+      activeLabel.value = t(demo.labelKey);
       frameUrl.value = `/web/viewers/${demo.fmt}.html?url=${encodeURIComponent(demo.url)}`;
     }
 
     async function loadPath() {
       const raw = pathInput.value.trim();
-      if (!raw) { toast("Enter a PLY path first", "error"); return; }
+      if (!raw) { toast(t("view.needPath"), "error"); return; }
       loading.value = true;
       try {
         const result = await loadPly(raw);
@@ -61,7 +62,7 @@ export default {
         activeLabel.value = raw.split("/").pop();
         frameUrl.value = `/web/viewers/${fmt}.html?url=${encodeURIComponent(url)}`;
       } catch (err) {
-        toast(`PLY load failed: ${err.message}`, "error", 7000);
+        toast(`${t("view.loadFailed")} ${err.message}`, "error", 7000);
       } finally {
         loading.value = false;
       }
@@ -78,30 +79,30 @@ export default {
     <div class="page" style="max-width:none">
       <div class="page-head">
         <div>
-          <div class="page-title">3D Viewer</div>
-          <div class="page-sub">Gaussian splats rendered in your browser — no install, no GPU server needed.</div>
+          <div class="page-title">{{ $t("view.title") }}</div>
+          <div class="page-sub">{{ $t("view.sub") }}</div>
         </div>
         <div class="page-actions" v-if="mode === 'scene'">
-          <ui-button icon="arrow-left" @click="back">Back</ui-button>
+          <ui-button icon="arrow-left" @click="back">{{ $t("view.back") }}</ui-button>
         </div>
       </div>
 
       <!-- picker -->
       <div v-if="mode !== 'scene'" class="grid-3">
         <button v-for="demo in DEMOS" :key="demo.id" class="choice" @click="openDemo(demo)">
-          <div class="choice-title"><icon name="box"></icon> {{ demo.label }}</div>
-          <div class="choice-desc">{{ demo.sub }} — loads instantly, nothing to configure.</div>
+          <div class="choice-title"><icon name="box"></icon> {{ $t(demo.labelKey) }}</div>
+          <div class="choice-desc">{{ $t(demo.subKey) }}</div>
         </button>
         <div class="card">
           <div class="card-body">
-            <div class="choice-title" style="margin-bottom:8px"><icon name="file"></icon> Load a PLY from this machine</div>
+            <div class="choice-title" style="margin-bottom:8px"><icon name="file"></icon> {{ $t("view.loadPly") }}</div>
             <div class="row" style="gap:8px">
               <input class="input mono" style="flex:1" v-model="pathInput"
-                     placeholder="/abs/path/point_cloud.ply (inside the project or allowed roots)" />
-              <ui-button variant="primary" icon="eye" :loading="loading" @click="loadPath">Load</ui-button>
+                     :placeholder="$t('view.loadPlaceholder')" />
+              <ui-button variant="primary" icon="eye" :loading="loading" @click="loadPath">{{ $t("view.load") }}</ui-button>
             </div>
             <div class="field-hint" style="margin-top:8px">
-              Training results appear here automatically from a run's “View 3D” button.
+              {{ $t("view.loadHint") }}
             </div>
           </div>
         </div>
@@ -111,7 +112,7 @@ export default {
       <div v-else class="card" style="overflow:hidden">
         <div class="card-head">
           <div class="card-title ellipsis">{{ activeLabel }}</div>
-          <div class="faint small">drag to orbit · scroll to zoom · right-drag to pan</div>
+          <div class="faint small">{{ $t("view.controls") }}</div>
         </div>
         <iframe v-if="frameUrl" :src="frameUrl"
                 style="width:100%;height:calc(100vh - var(--topbar-h) - 150px);border:none;display:block;background:#000"

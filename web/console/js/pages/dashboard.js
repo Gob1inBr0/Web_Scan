@@ -24,11 +24,11 @@ export default {
     <div class="page">
       <div class="page-head">
         <div>
-          <div class="page-title">Remote 3DGS training, end to end</div>
-          <div class="page-sub">Upload a scene, train on your GPU server, compare results — from one console.</div>
+          <div class="page-title">{{ $t("dash.title") }}</div>
+          <div class="page-sub">{{ $t("dash.sub") }}</div>
         </div>
         <div class="page-actions">
-          <ui-button variant="primary" icon="plus" @click="navigate('wizard')">New Training</ui-button>
+          <ui-button variant="primary" icon="plus" @click="navigate('wizard')">{{ $t("nav.wizard") }}</ui-button>
         </div>
       </div>
 
@@ -37,29 +37,29 @@ export default {
           <div class="row" style="gap:12px">
             <icon name="link" style="width:18px;height:18px;color:var(--accent)"></icon>
             <div>
-              <div style="font-weight:650">Connect your GPU server to get started</div>
-              <div class="small muted">Create a connection profile — paste an SSH command and you are mostly done.</div>
+              <div style="font-weight:650">{{ $t("dash.connectTitle") }}</div>
+              <div class="small muted">{{ $t("dash.connectHint") }}</div>
             </div>
           </div>
-          <ui-button variant="primary" size="sm" icon="settings" @click="navigate('settings')">Set up connection</ui-button>
+          <ui-button variant="primary" size="sm" icon="settings" @click="navigate('settings')">{{ $t("dash.connectBtn") }}</ui-button>
         </div>
       </div>
 
       <div class="grid-4" style="margin-bottom:20px">
-        <ui-stat label="Active" :value="active.length" hint="running or queued" />
-        <ui-stat label="Completed" :value="completed" />
-        <ui-stat label="Failed" :value="failed" />
-        <ui-stat label="API" :value="store.apiOnline ? 'Online' : store.apiOnline === false ? 'Offline' : '…'" :hint="store.apiOnline ? 'local server reachable' : ''" />
+        <ui-stat :label="$t('dash.statActive')" :value="active.length" :hint="$t('dash.statActiveHint')" />
+        <ui-stat :label="$t('dash.statCompleted')" :value="completed" />
+        <ui-stat :label="$t('dash.statFailed')" :value="failed" />
+        <ui-stat :label="$t('dash.statApi')" :value="store.apiOnline ? $t('dash.online') : store.apiOnline === false ? $t('dash.offline') : '…'" />
       </div>
 
       <div class="grid-2">
-        <ui-card title="Recent runs" dense>
+        <ui-card :title="$t('dash.recent')" dense>
           <template #actions>
-            <ui-button size="sm" variant="ghost" icon="arrow-right" @click="navigate('runs')">All runs</ui-button>
+            <ui-button size="sm" variant="ghost" icon="arrow-right" @click="navigate('runs')">{{ $t("dash.allRuns") }}</ui-button>
           </template>
-          <ui-empty v-if="!recent.length" icon="list" title="No runs yet"
-                    hint="Start your first training from the New Training page.">
-            <ui-button variant="primary" size="sm" icon="plus" @click="navigate('wizard')">New Training</ui-button>
+          <ui-empty v-if="!recent.length" icon="list" :title="$t('dash.noRuns')"
+                    :hint="$t('dash.noRunsHint')">
+            <ui-button variant="primary" size="sm" icon="plus" @click="navigate('wizard')">{{ $t("nav.wizard") }}</ui-button>
           </ui-empty>
           <table v-else class="tbl">
             <tbody>
@@ -76,22 +76,20 @@ export default {
         </ui-card>
 
         <div class="stack">
-          <ui-card title="Try the 3D viewer now" dense>
+          <ui-card :title="$t('dash.tryViewer')" dense>
             <div class="card-body" style="padding-top:2px">
-              <p class="small muted" style="margin-bottom:12px">
-                No GPU server needed for this part — two built-in Gaussian scenes render right in the browser.
-              </p>
+              <p class="small muted" style="margin-bottom:12px">{{ $t("dash.tryViewerHint") }}</p>
               <div class="row-wrap">
-                <ui-button size="sm" icon="box" @click="navigate('viewer', 'demo')">Open demo scenes</ui-button>
+                <ui-button size="sm" icon="box" @click="navigate('viewer', 'demo')">{{ $t("dash.openDemos") }}</ui-button>
               </div>
             </div>
           </ui-card>
-          <ui-card title="How it works" dense>
+          <ui-card :title="$t('dash.how')" dense>
             <div class="card-body" style="display:flex;flex-direction:column;gap:10px;font-size:var(--fs-sm);color:var(--text-2)">
-              <div class="row" style="gap:10px"><icon name="link" style="width:14px;height:14px;color:var(--accent)"></icon>1. Save a connection profile for your GPU server</div>
-              <div class="row" style="gap:10px"><icon name="upload" style="width:14px;height:14px;color:var(--accent)"></icon>2. Upload scene images or reuse data already on the server</div>
-              <div class="row" style="gap:10px"><icon name="zap" style="width:14px;height:14px;color:var(--accent)"></icon>3. Pick an algorithm, submit — precheck runs automatically</div>
-              <div class="row" style="gap:10px"><icon name="layers" style="width:14px;height:14px;color:var(--accent)"></icon>4. Compare runs per dataset and view results in 3D</div>
+              <div class="row" style="gap:10px"><icon name="link" style="width:14px;height:14px;color:var(--accent)"></icon>{{ $t("dash.how1") }}</div>
+              <div class="row" style="gap:10px"><icon name="upload" style="width:14px;height:14px;color:var(--accent)"></icon>{{ $t("dash.how2") }}</div>
+              <div class="row" style="gap:10px"><icon name="zap" style="width:14px;height:14px;color:var(--accent)"></icon>{{ $t("dash.how3") }}</div>
+              <div class="row" style="gap:10px"><icon name="layers" style="width:14px;height:14px;color:var(--accent)"></icon>{{ $t("dash.how4") }}</div>
             </div>
           </ui-card>
         </div>

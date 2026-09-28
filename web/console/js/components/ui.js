@@ -2,6 +2,7 @@
 // stat, toasts, progress, copyable text, spinner. Registered globally.
 
 import { store, toast } from "../store.js";
+import { t } from "../i18n.js";
 
 const { computed } = Vue;
 
@@ -10,18 +11,18 @@ const { computed } = Vue;
 export function jobStatusMeta(job) {
   const status = String(job?.status || "").toLowerCase();
   const map = {
-    queued:               { label: "Queued",       kind: "neutral",  icon: "clock" },
-    running:              { label: "Running",      kind: "accent",   icon: "loader", pulse: true },
-    detached:             { label: "Detached",     kind: "warning",  icon: "clock" },
-    uploading:            { label: "Uploading",    kind: "accent",   icon: "loader", pulse: true },
-    downloading:          { label: "Downloading",  kind: "accent",   icon: "loader", pulse: true },
-    completed:            { label: "Completed",    kind: "success",  icon: "check-circle" },
-    failed:               { label: "Failed",       kind: "danger",   icon: "x-circle" },
-    canceled:             { label: "Canceled",     kind: "neutral",  icon: "x" },
-    partial_success:      { label: "Partial",      kind: "warning",  icon: "alert" },
-    training_success_render_failed:   { label: "Render failed", kind: "warning", icon: "alert" },
-    training_success_metrics_failed:  { label: "Metrics failed", kind: "warning", icon: "alert" },
-    training_success_postprocess_failed: { label: "Postproc failed", kind: "warning", icon: "alert" },
+    queued:               { label: t("status.queued"),       kind: "neutral",  icon: "clock" },
+    running:              { label: t("status.running"),      kind: "accent",   icon: "loader", pulse: true },
+    detached:             { label: t("status.detached"),     kind: "warning",  icon: "clock" },
+    uploading:            { label: t("status.uploading"),    kind: "accent",   icon: "loader", pulse: true },
+    downloading:          { label: t("status.downloading"),  kind: "accent",   icon: "loader", pulse: true },
+    completed:            { label: t("status.completed"),    kind: "success",  icon: "check-circle" },
+    failed:               { label: t("status.failed"),       kind: "danger",   icon: "x-circle" },
+    canceled:             { label: t("status.canceled"),     kind: "neutral",  icon: "x" },
+    partial_success:      { label: t("status.partial"),      kind: "warning",  icon: "alert" },
+    training_success_render_failed:   { label: t("status.renderFailed"),   kind: "warning", icon: "alert" },
+    training_success_metrics_failed:  { label: t("status.metricsFailed"),  kind: "warning", icon: "alert" },
+    training_success_postprocess_failed: { label: t("status.postprocFailed"), kind: "warning", icon: "alert" },
   };
   return map[status] || { label: status || "-", kind: "neutral", icon: "clock" };
 }
@@ -264,11 +265,12 @@ const UiToasts = {
 
 const UiSpinner = {
   name: "UiSpinner",
-  props: { label: { type: String, default: "Loading…" } },
+  props: { label: { type: String, default: "" } },
+  computed: { text() { return this.label || t("common.loading"); } },
   template: `
     <div class="empty">
       <icon name="loader" class="up-spin" style="width:26px;height:26px"></icon>
-      <div class="small muted">{{ label }}</div>
+      <div class="small muted">{{ text }}</div>
     </div>
   `,
 };

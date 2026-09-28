@@ -4,6 +4,7 @@
 import { store, remoteConfig, hasPassword, activeProfile, toast, setRunName, navigate, defaultProfile, pollOnce } from "../store.js";
 import { getAlgorithms, remoteCheck, previewRun, submitRun, streamFrame, materializeSession } from "../api.js";
 import { parseSshCommand } from "../ssh-parse.js";
+import { t } from "../i18n.js";
 
 const { reactive, computed, watch, onMounted } = Vue;
 
@@ -99,7 +100,7 @@ export default {
 
     function addFiles(fileList) {
       const images = [...fileList].filter((f) => /\.(png|jpe?g|bmp|webp|tiff?)$/i.test(f.name));
-      if (!images.length) { toast("No image files found (png/jpg/webp/tiff)", "error"); return; }
+      if (!images.length) { toast(t("wiz.noImages"), "error"); return; }
       draft.files = images;
       if (!draft.datasetName) {
         draft.datasetName = images[0].name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 32) || "scene";
@@ -126,17 +127,17 @@ export default {
           include_datasets: true,
         });
         draft.remoteDatasets = data.result?.datasets || [];
-        if (!draft.remoteDatasets.length) toast("No reusable datasets found on the server", "info");
+        if (!draft.remoteDatasets.length) toast(t("wiz.noDatasetsFound"), "info");
       } catch (err) {
-        toast(`Could not list remote datasets: ${err.message}`, "error", 7000);
+        toast(`${t("wiz.listFailed")} ${err.message}`, "error", 7000);
       } finally {
         draft.loadingRemoteDatasets = false;
       }
     }
 
     async function uploadAndMaterialize() {
-      if (!draft.files.length) throw new Error("Pick images first.");
-      if (!draft.datasetName.trim()) throw new Error("Give the dataset a name.");
+      if (!draft.files.length) throw new Error(t("wiz.pickImages"));
+      if (!draft.datasetName.trim()) throw new Error(t("wiz.nameDataset"));
       draft.uploading = true;
       draft.uploadDone = 0;
       try {
@@ -162,7 +163,7 @@ export default {
           dataset_name: draft.datasetName.trim(),
         });
         draft.materialized = result.result || result;
-        toast(`Uploaded ${draft.files.length} images as dataset "${draft.datasetName.trim()}"`, "success");
+        toast(`${draft.files.length} ${t("wiz.uploadedAs")} "${draft.datasetName.trim()}"`, "success");
       } finally {
         draft.uploading = false;
       }
@@ -189,8 +190,8 @@ export default {
 
     async function submitAll() {
       try {
-        if (!profile.value) throw new Error("No connection profile. Create one in Settings.");
-        if (!hasPassword()) throw new Error("Enter the server password for this profile (Settings, stored for this browser session only).");
+        if (!profile.value) throw new Error(t("wiz.needProfile"));
+        if (!hasPassword()) throw new Error(t("wiz.needPassword"));
 
         draft.prechecking = true;
         draft.precheckResult = null;
@@ -204,7 +205,7 @@ export default {
         });
         draft.precheckResult = check.result || {};
         if (check.result?.checks?.some((c) => c.required && !c.ok)) {
-          throw new Error("Remote precheck failed — fix the failing items and submit again.");
+          throw new Error(t("wiz.precheckFailed"));
         }
         draft.prechecking = false;
 
@@ -262,11 +263,11 @@ export default {
         if (data.job?.id) {
           setRunName(data.job.id, draft.runLabel.trim() || data.job.id);
           await pollOnce();
-          toast(`Submitted: ${draft.runLabel}`, "success", 6000);
+          toast(`${t("wiz.submitted")} ${draft.runLabel}`, "success", 6000);
           navigate("runs", data.job.id);
         }
       } catch (err) {
-        toast(`Submit failed: ${err.message}`, "error", 9000);
+        toast(`${t("wiz.submitFailed")} ${err.message}`, "error", 9000);
       } finally {
         draft.submitting = false;
       }
@@ -282,7 +283,7 @@ export default {
     const quickSsh = Vue.ref("");
     function quickConnect() {
       const parsed = parseSshCommand(quickSsh.value);
-      if (!parsed || !parsed.host) { toast("Could not parse that — expected something like ssh -p 10526 root@1.2.3.4", "error"); return; }
+      if (!parsed || !parsed.host) { toast(t("wiz.parseFail"), "error"); return; }
       const profile = defaultProfile();
       profile.host = parsed.host;
       profile.port = parsed.port || 22;
@@ -292,7 +293,7 @@ export default {
       store.activeProfileId = profile.id;
       store.persistProfiles();
       quickSsh.value = "";
-      toast(`Profile "${profile.label}" created — add its password in Settings`, "success", 6000);
+      toast(`${t("wiz.profileCreated")}`, "success", 6000);
     }
 
     return {
@@ -306,28 +307,28 @@ export default {
     <div class="page" style="max-width: 860px">
       <div class="stepper">
         <div class="step" :class="{ active: draft.step === 1, done: draft.step > 1 }">
-          <span class="step-num">{{ draft.step > 1 ? "✓" : "1" }}</span> Data
+          <span class="step-num">{{ draft.step > 1 ? "✓" : "1" }}</span> {{ $t("wiz.stepData") }}
         </div>
         <div class="step-line"></div>
         <div class="step" :class="{ active: draft.step === 2, done: draft.step > 2 }">
-          <span class="step-num">{{ draft.step > 2 ? "✓" : "2" }}</span> Algorithm
+          <span class="step-num">{{ draft.step > 2 ? "✓" : "2" }}</span> {{ $t("wiz.stepAlgorithm") }}
         </div>
         <div class="step-line"></div>
         <div class="step" :class="{ active: draft.step === 3 }">
-          <span class="step-num">3</span> Submit
+          <span class="step-num">3</span> {{ $t("wiz.stepSubmit") }}
         </div>
       </div>
 
       <!-- STEP 1: DATA -->
-      <ui-card v-if="draft.step === 1" title="Choose your data">
+      <ui-card v-if="draft.step === 1" :title="$t('wiz.chooseData')">
         <div class="grid-2" style="margin-bottom:16px">
           <button class="choice" :class="{ selected: draft.source === 'upload' }" @click="draft.source = 'upload'">
-            <div class="choice-title"><icon name="upload"></icon> Upload new images</div>
-            <div class="choice-desc">Pick a folder of scene photos; COLMAP preprocessing runs on the server automatically.</div>
+            <div class="choice-title"><icon name="upload"></icon> {{ $t("wiz.uploadNew") }}</div>
+            <div class="choice-desc">{{ $t("wiz.uploadNewHint") }}</div>
           </button>
           <button class="choice" :class="{ selected: draft.source === 'remote' }" @click="draft.source = 'remote'; pickRemoteDatasets()">
-            <div class="choice-title"><icon name="database"></icon> Reuse data on the server</div>
-            <div class="choice-desc">Train again on a dataset that already lives on the GPU machine.</div>
+            <div class="choice-title"><icon name="database"></icon> {{ $t("wiz.reuseRemote") }}</div>
+            <div class="choice-desc">{{ $t("wiz.reuseRemoteHint") }}</div>
           </button>
         </div>
 
@@ -338,20 +339,20 @@ export default {
                @dragleave="$event.currentTarget.classList.remove('over')"
                @drop.prevent="onDrop($event)">
             <icon name="upload"></icon>
-            <div><strong>Click to choose images</strong> or drop them here</div>
-            <div class="small" style="margin-top:2px">8–12+ sharp photos of the scene work best (png / jpg / webp / tiff)</div>
+            <div><strong>{{ $t("wiz.dropTitle") }}</strong> {{ $t("wiz.dropOr") }}</div>
+            <div class="small" style="margin-top:2px">{{ $t("wiz.dropHint") }}</div>
           </div>
           <input ref="fileInput" type="file" multiple accept="image/*" hidden
                  @change="addFiles($event.target.files); $event.target.value = ''" />
 
           <div v-if="draft.files.length" style="margin-top:14px">
             <div class="row-wrap" style="margin-bottom:10px">
-              <ui-field label="Dataset name" style="flex:1;max-width:320px">
+              <ui-field :label="$t('wiz.datasetName')" style="flex:1;max-width:320px">
                 <input class="input" v-model="draft.datasetName" placeholder="e.g. garden-table" />
               </ui-field>
               <label class="checkbox-row" style="margin-top:20px">
                 <input type="checkbox" v-model="draft.autoColmap" />
-                Run COLMAP on the server when no sparse model exists
+                {{ $t("wiz.autoColmap") }}
               </label>
             </div>
             <div class="chip-list" style="margin-bottom:12px">
@@ -360,19 +361,19 @@ export default {
             </div>
             <div v-if="draft.materialized" class="check-item ok">
               <icon name="check-circle"></icon>
-              <div><span class="ci-name">Dataset ready on the server.</span>
-              <span class="ci-msg">{{ draft.files.length }} images staged — continue to the algorithm step.</span></div>
+              <div><span class="ci-name">{{ $t("wiz.datasetReady") }}</span>
+              <span class="ci-msg">{{ draft.files.length }} {{ $t("wiz.datasetReadyHint") }}</span></div>
             </div>
           </div>
         </template>
 
         <template v-else>
           <div class="row-wrap" style="margin-bottom:12px">
-            <ui-button size="sm" :loading="draft.loadingRemoteDatasets" icon="refresh" @click="pickRemoteDatasets">Refresh list</ui-button>
-            <span class="small faint" v-if="draft.loadingRemoteDatasets">Scanning the server workspace…</span>
+            <ui-button size="sm" :loading="draft.loadingRemoteDatasets" icon="refresh" @click="pickRemoteDatasets">{{ $t("wiz.refreshList") }}</ui-button>
+            <span class="small faint" v-if="draft.loadingRemoteDatasets">{{ $t("wiz.scanning") }}</span>
           </div>
           <ui-empty v-if="!draft.remoteDatasets.length && !draft.loadingRemoteDatasets" icon="database"
-                    title="Nothing listed yet" hint="Click Refresh to scan the server workspace for reusable datasets."></ui-empty>
+                    :title="$t('wiz.nothingListed')" :hint="$t('wiz.nothingListedHint')"></ui-empty>
           <div v-else class="stack" style="gap:8px">
             <button v-for="ds in draft.remoteDatasets" :key="ds.id" class="choice" style="padding:12px 16px"
                     :class="{ selected: draft.selectedRemoteDatasetId === ds.id }"
@@ -385,7 +386,7 @@ export default {
                 <ui-badge kind="neutral">{{ ds.stage_label || "dataset" }}</ui-badge>
               </div>
             </button>
-            <ui-field label="Or use a custom path on the server" hint="Points at a workspace directory with images (and optionally a COLMAP sparse model)">
+            <ui-field :label="$t('wiz.customPath')" :hint="$t('wiz.customPathHint')">
               <input class="input mono" v-model="draft.remoteDatasetPath" placeholder="/root/autodl-tmp/…/workspace" />
             </ui-field>
           </div>
@@ -395,21 +396,21 @@ export default {
           <ui-button variant="primary" :disabled="!canNext" :loading="draft.uploading"
                      @click="goNext">
             <span v-if="draft.uploading">{{ uploadLabel }}</span>
-            <template v-else>Next: Algorithm <icon name="arrow-right"></icon></template>
+            <template v-else>{{ $t("wiz.nextAlgorithm") }} <icon name="arrow-right"></icon></template>
           </ui-button>
         </div>
       </ui-card>
 
       <!-- STEP 2: ALGORITHM -->
-      <ui-card v-if="draft.step === 2" title="Pick the algorithm and scale">
+      <ui-card v-if="draft.step === 2" :title="$t('wiz.pickAlgorithm')">
         <div class="grid-2">
-          <ui-field label="Algorithm" hint="Only algorithms with training enabled are listed">
+          <ui-field :label="$t('wiz.algorithm')" :hint="$t('wiz.algorithmHint')">
             <select class="select" v-model="draft.family">
               <option v-for="a in trainable" :key="a.family" :value="a.family">{{ a.label || a.family }}</option>
             </select>
           </ui-field>
-          <ui-field label="Run name" hint="Shown in the runs list instead of an opaque id">
-            <input class="input" v-model="draft.runLabel" placeholder="auto-generated if left empty" />
+          <ui-field :label="$t('wiz.runName')" :hint="$t('wiz.runNameHint')">
+            <input class="input" v-model="draft.runLabel" :placeholder="$t('wiz.runNamePlaceholder')" />
           </ui-field>
         </div>
 
@@ -422,80 +423,79 @@ export default {
         </div>
 
         <div v-if="draft.preset === 'custom'" class="grid-4" style="margin-top:14px">
-          <ui-field label="Iterations"><input class="input num" type="number" v-model.number="draft.iterations" min="100" /></ui-field>
-          <ui-field label="Save interval"><input class="input num" type="number" v-model.number="draft.save_interval" min="500" /></ui-field>
-          <ui-field label="λ (rate weight)"><input class="input num" v-model.number="draft.lmbda" /></ui-field>
-          <ui-field label="Voxel size"><input class="input num" v-model.number="draft.voxel_size" /></ui-field>
+          <ui-field :label="$t('wiz.iterations')"><input class="input num" type="number" v-model.number="draft.iterations" min="100" /></ui-field>
+          <ui-field :label="$t('wiz.saveInterval')"><input class="input num" type="number" v-model.number="draft.save_interval" min="500" /></ui-field>
+          <ui-field :label="$t('wiz.lmbda')"><input class="input num" v-model.number="draft.lmbda" /></ui-field>
+          <ui-field :label="$t('wiz.voxelSize')"><input class="input num" v-model.number="draft.voxel_size" /></ui-field>
         </div>
 
         <div style="margin-top:16px">
-          <ui-field label="Checkpoint to start from (optional)" hint="Leave empty to train from scratch">
+          <ui-field :label="$t('wiz.checkpoint')" :hint="$t('wiz.checkpointHint')">
             <input class="input mono" v-model="draft.checkpointPath" placeholder="/path/on/server/chkpth/3000" />
           </ui-field>
         </div>
 
         <div class="row" style="justify-content:space-between;margin-top:20px">
-          <ui-button icon="arrow-left" @click="draft.step = 1">Back</ui-button>
+          <ui-button icon="arrow-left" @click="draft.step = 1">{{ $t("wiz.back") }}</ui-button>
           <ui-button variant="primary" :disabled="!canNext" @click="goNext">
-            Submit run <icon name="zap"></icon>
+            {{ $t("wiz.submitRun") }} <icon name="zap"></icon>
           </ui-button>
         </div>
       </ui-card>
 
       <!-- STEP 3: SUBMIT -->
-      <ui-card v-if="draft.step === 3" title="Submitting your run">
+      <ui-card v-if="draft.step === 3" :title="$t('wiz.submitting')">
         <div class="check-list" style="margin-bottom:16px">
           <div class="check-item" :class="draft.precheckResult ? 'ok' : 'warn'">
             <icon :name="draft.prechecking ? 'loader' : draft.precheckResult ? 'check-circle' : 'loader'"
                   :class="{ 'up-spin': draft.prechecking }"></icon>
-            <div><span class="ci-name">Remote environment check</span>
-              <div class="ci-msg" v-if="draft.prechecking">Testing SSH, paths, python, tmux…</div>
-              <div class="ci-msg" v-else-if="draft.precheckResult">{{ (draft.precheckResult.checks || []).filter(c => c.ok).length }}/{{ (draft.precheckResult.checks || []).length }} checks passed</div>
-              <div class="ci-msg" v-else>queued</div>
+            <div><span class="ci-name">{{ $t("wiz.checkRemote") }}</span>
+              <div class="ci-msg" v-if="draft.prechecking">{{ $t("wiz.checkingRemote") }}</div>
+              <div class="ci-msg" v-else-if="draft.precheckResult">{{ (draft.precheckResult.checks || []).filter(c => c.ok).length }}/{{ (draft.precheckResult.checks || []).length }} {{ $t("wiz.checksPassed") }}</div>
+              <div class="ci-msg" v-else>{{ $t("wiz.checkQueued") }}</div>
             </div>
           </div>
           <div class="check-item" :class="draft.preview ? 'ok' : draft.precheckResult ? 'fail' : 'warn'">
             <icon :name="draft.previewing ? 'loader' : draft.preview ? 'check-circle' : draft.precheckResult ? 'x-circle' : 'loader'"
                   :class="{ 'up-spin': draft.previewing }"></icon>
-            <div><span class="ci-name">Command preview</span>
-              <div class="ci-msg" v-if="draft.previewing">Building the exact remote command…</div>
-              <div class="ci-msg" v-else-if="draft.preview">Ready — confirm below to launch</div>
-              <div class="ci-msg" v-else-if="draft.precheckResult">Blocked by the failed check above</div>
+            <div><span class="ci-name">{{ $t("wiz.cmdPreview") }}</span>
+              <div class="ci-msg" v-if="draft.previewing">{{ $t("wiz.buildingCmd") }}</div>
+              <div class="ci-msg" v-else-if="draft.preview">{{ $t("wiz.cmdReady") }}</div>
+              <div class="ci-msg" v-else-if="draft.precheckResult">{{ $t("wiz.cmdBlocked") }}</div>
             </div>
           </div>
         </div>
 
         <template v-if="draft.preview">
           <div class="field" style="margin-bottom:14px">
-            <div class="field-label">Remote command</div>
+            <div class="field-label">{{ $t("wiz.remoteCommand") }}</div>
             <div class="codeblock">{{ draft.preview.remote_command || draft.preview.shell_command || draft.preview.command_override }}</div>
           </div>
           <dl class="kv" style="margin-bottom:18px">
-            <dt>Remote output</dt><dd class="mono">{{ draft.preview.output_dir || "-" }}</dd>
-            <dt>Local download</dt><dd class="mono">{{ draft.preview.local_output_dir || "-" }}</dd>
+            <dt>{{ $t("wiz.remoteOutput") }}</dt><dd class="mono">{{ draft.preview.output_dir || "-" }}</dd>
+            <dt>{{ $t("wiz.localDownload") }}</dt><dd class="mono">{{ draft.preview.local_output_dir || "-" }}</dd>
           </dl>
           <div class="row" style="justify-content:flex-end;gap:10px">
-            <ui-button icon="arrow-left" @click="draft.step = 2">Back</ui-button>
+            <ui-button icon="arrow-left" @click="draft.step = 2">{{ $t("wiz.back") }}</ui-button>
             <ui-button variant="primary" size="lg" icon="zap" :loading="draft.submitting" @click="draft.confirmOpen = true">
-              Launch training
+              {{ $t("wiz.launch") }}
             </ui-button>
           </div>
         </template>
         <div v-else class="row" style="justify-content:flex-start;margin-top:6px">
-          <ui-button icon="rotate" @click="submitAll" :disabled="draft.prechecking || draft.previewing">Retry</ui-button>
+          <ui-button icon="rotate" @click="submitAll" :disabled="draft.prechecking || draft.previewing">{{ $t("wiz.retry") }}</ui-button>
         </div>
       </ui-card>
 
       <!-- confirm modal -->
-      <ui-modal v-if="draft.confirmOpen" title="Launch this training?" :width="620" @close="draft.confirmOpen = false">
+      <ui-modal v-if="draft.confirmOpen" :title="$t('wiz.confirmTitle')" :width="620" @close="draft.confirmOpen = false">
         <p class="small muted" style="margin-bottom:12px">
-          The command below will run on <strong>{{ profile ? (profile.label || profile.host) : "the server" }}</strong> inside a tmux session.
-          You can close this browser tab afterwards — training keeps running and results download automatically.
+          {{ $t("wiz.confirmBody") }} <strong>{{ profile ? (profile.label || profile.host) : "" }}</strong>{{ $t("wiz.confirmBodyAfter") }}
         </p>
         <div class="codeblock">{{ draft.preview?.remote_command || draft.preview?.shell_command }}</div>
         <template #footer>
-          <ui-button @click="draft.confirmOpen = false">Cancel</ui-button>
-          <ui-button variant="primary" icon="zap" :loading="draft.submitting" @click="confirmSubmit">Confirm & run</ui-button>
+          <ui-button @click="draft.confirmOpen = false">{{ $t("wiz.cancel") }}</ui-button>
+          <ui-button variant="primary" icon="zap" :loading="draft.submitting" @click="confirmSubmit">{{ $t("wiz.confirmRun") }}</ui-button>
         </template>
       </ui-modal>
     </div>

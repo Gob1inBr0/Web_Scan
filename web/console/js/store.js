@@ -60,6 +60,10 @@ export const store = reactive({
 
   profiles: loadJson(PROFILES_KEY, []),
   activeProfileId: loadJson(ACTIVE_KEY, ""),
+  locale: (() => {
+    try { return localStorage.getItem("webscan-console-locale-v1") === "zh" ? "zh" : "en"; }
+    catch { return "en"; }
+  })(),
   prefs: Object.assign(
     { notifyOnDone: true, pollIntervalSec: 5 },
     loadJson(PREFS_KEY, {}),

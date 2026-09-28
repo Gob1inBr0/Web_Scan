@@ -1,6 +1,7 @@
 // Datasets page — groups runs by dataset, side-by-side comparison of picks.
 
 import { store, navigate, runName, toast } from "../store.js";
+import { t } from "../i18n.js";
 import { formatBytes } from "../components/ui.js";
 
 const { computed, ref } = Vue;
@@ -25,7 +26,7 @@ function datasetLabel(job) {
     const parts = raw.split("/").filter(Boolean);
     // …/datasets/<family>/<dataset-id>/workspace → the dataset-id part.
     const withoutTail = parts[parts.length - 1] === "workspace" ? parts.slice(0, -1) : parts;
-    return withoutTail[withoutTail.length - 1] || raw || "(unnamed)";
+    return withoutTail[withoutTail.length - 1] || raw || t("ds.unnamed");
   }
   return raw;
 }
@@ -37,6 +38,7 @@ export default {
       const map = new Map();
       for (const job of store.jobs) {
         const label = datasetLabel(job);
+        if (!label || label === "(unnamed)" || label === t("ds.unnamed")) { /* skip */ }
         if (!map.has(label)) map.set(label, []);
         map.get(label).push(job);
       }
@@ -60,7 +62,7 @@ export default {
       const next = new Set(picks.value);
       if (next.has(job.id)) next.delete(job.id);
       else {
-        if (next.size >= 4) { toast("Compare up to 4 runs at a time", "info"); return; }
+        if (next.size >= 4) { toast(t("ds.maxFour"), "info"); return; }
         next.add(job.id);
       }
       picks.value = next;
@@ -90,15 +92,15 @@ export default {
     <div class="page">
       <div class="page-head">
         <div>
-          <div class="page-title">Datasets</div>
-          <div class="page-sub">Every run grouped by its dataset. Pick two or more to compare side by side.</div>
+          <div class="page-title">{{ $t("ds.title") }}</div>
+          <div class="page-sub">{{ $t("ds.sub") }}</div>
         </div>
       </div>
 
       <ui-empty v-if="store.jobsLoaded && !groups.length" icon="layers"
-                title="No datasets yet"
-                hint="Once runs finish they are grouped here by the dataset they trained on — that is where comparisons live.">
-        <ui-button variant="primary" size="sm" icon="plus" @click="navigate('wizard')">New Training</ui-button>
+                :title="$t('ds.none')"
+                :hint="$t('ds.noneHint')">
+        <ui-button variant="primary" size="sm" icon="plus" @click="navigate('wizard')">{{ $t("nav.wizard") }}</ui-button>
       </ui-empty>
 
       <div v-else class="stack">
@@ -107,8 +109,8 @@ export default {
             <div class="spread" style="margin-bottom:10px">
               <div class="row" style="gap:8px">
                 <icon name="layers" style="width:15px;height:15px;color:var(--accent)"></icon>
-                <strong class="small">Comparing {{ compareJobs.length }} runs</strong>
-                <button class="btn btn-ghost btn-sm" @click="picks = new Set()">Clear</button>
+                <strong class="small">{{ $t("ds.comparing") }} {{ compareJobs.length }} {{ $t("ds.runs") }}</strong>
+                <button class="btn btn-ghost btn-sm" @click="picks = new Set()">{{ $t("ds.clear") }}</button>
               </div>
             </div>
             <div class="compare-grid">
@@ -120,16 +122,16 @@ export default {
               </div>
             </div>
             <table class="tbl" style="margin-top:10px">
-              <thead><tr><th>Metric</th><th v-for="job in compareJobs" :key="job.id">{{ runName(job) }}</th></tr></thead>
+              <thead><tr><th>{{ $t("ds.colMetric") }}</th><th v-for="job in compareJobs" :key="job.id">{{ runName(job) }}</th></tr></thead>
               <tbody>
                 <tr v-for="metric in METRICS" :key="metric.key">
                   <td class="muted">{{ metric.label }}</td>
                   <td v-for="job in compareJobs" :key="job.id" class="num">
                     <template v-if="metricValue(job, metric.key) !== null">
                       {{ metricValue(job, metric.key).toFixed(metric.digits) }}
-                      <span v-if="penalty(job, metric) === 'best'" class="delta-pos" title="Best of the selected runs">★</span>
+                      <span v-if="penalty(job, metric) === 'best'" class="delta-pos" :title="$t('ds.best')">★</span>
                       <span v-else-if="typeof penalty(job, metric) === 'number'" class="delta-neg small"
-                            :title="'worse than the best pick by ' + penalty(job, metric).toFixed(metric.digits)">
+                            :title="$t('ds.worse') + ' ' + penalty(job, metric).toFixed(metric.digits)">
                         (−{{ penalty(job, metric).toFixed(metric.digits) }})
                       </span>
                     </template>
@@ -146,13 +148,13 @@ export default {
             <div class="row" style="gap:10px">
               <icon :name="expanded === group.label ? 'chevron-down' : 'chevron-right'" style="width:15px;height:15px;color:var(--text-3)"></icon>
               <div class="card-title">{{ group.label }}</div>
-              <ui-badge kind="neutral">{{ group.jobs.length }} run{{ group.jobs.length === 1 ? "" : "s" }}</ui-badge>
+              <ui-badge kind="neutral">{{ group.jobs.length }} {{ $t("ds.runs") }}</ui-badge>
             </div>
-            <div class="faint small">{{ group.jobs.filter(j => j.status === 'completed').length }} completed</div>
+            <div class="faint small">{{ group.jobs.filter(j => j.status === 'completed').length }} {{ $t("ds.completed") }}</div>
           </div>
           <table v-if="expanded === group.label" class="tbl">
             <thead>
-              <tr><th style="width:34px"></th><th>Run</th><th>Status</th><th>PSNR</th><th>SSIM</th><th>LPIPS</th><th>Size</th><th></th></tr>
+              <tr><th style="width:34px"></th><th>{{ $t("runs.colRun") }}</th><th>{{ $t("runs.colStatus") }}</th><th>{{ $t("ds.colPsnr") }}</th><th>{{ $t("ds.colSsim") }}</th><th>{{ $t("ds.colLpips") }}</th><th>{{ $t("ds.colSize") }}</th><th></th></tr>
             </thead>
             <tbody>
               <tr v-for="job in group.jobs" :key="job.id">
