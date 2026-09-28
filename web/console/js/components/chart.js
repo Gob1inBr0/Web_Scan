@@ -50,7 +50,7 @@ export default {
     },
   },
   template: `
-    <div v-if="!layout" class="faint small" style="padding: 34px 0; text-align:center">No metric points yet</div>
+    <div v-if="!layout" class="faint small" style="padding: 34px 0; text-align:center">{{ $t("chart.noPoints") }}</div>
     <svg v-else :viewBox="'0 0 ' + layout.width + ' ' + layout.height" style="width:100%;display:block">
       <g v-for="tick in layout.ticks">
         <line :x1="layout.pad.left" :x2="layout.width - layout.pad.right" :y1="tick.y" :y2="tick.y"

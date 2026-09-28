@@ -35,6 +35,8 @@ function newDraft() {
     captureId: "",
     datasetName: "",
     files: [],
+    lmbda: 0.001,
+    voxel_size: 0.001,
     uploading: false,
     uploadDone: 0,
     materialized: null,
@@ -75,7 +77,7 @@ export default {
         );
         if (!draft.family && algorithms.value.length) draft.family = algorithms.value[0].family;
       } catch (err) {
-        toast(`Failed to load algorithms: ${err.message}`, "error");
+        toast(`${t("wiz.algorithmsFailed")}: ${err.message}`, "error");
       } finally {
         loadingAlgorithms.value = false;
       }
@@ -95,11 +97,13 @@ export default {
     });
 
     const uploadLabel = computed(() =>
-      draft.uploading ? `Uploading ${draft.uploadDone}/${draft.files.length}…` : `Upload ${draft.files.length} image${draft.files.length === 1 ? "" : "s"}`,
+      draft.uploading
+        ? `${t("wiz.uploadingPrefix")}${draft.uploadDone}/${draft.files.length}…`
+        : `${draft.files.length} ${t("wiz.uploadImages")}`,
     );
 
     function addFiles(fileList) {
-      const images = [...fileList].filter((f) => /\.(png|jpe?g|bmp|webp|tiff?)$/i.test(f.name));
+      const images = [...fileList].filter((f) => /\.(png|jpe?g)$/i.test(f.name));
       if (!images.length) { toast(t("wiz.noImages"), "error"); return; }
       draft.files = images;
       if (!draft.datasetName) {
@@ -164,6 +168,9 @@ export default {
         });
         draft.materialized = result.result || result;
         toast(`${draft.files.length} ${t("wiz.uploadedAs")} "${draft.datasetName.trim()}"`, "success");
+      } catch (err) {
+        toast(`${t("wiz.uploadFailed")}: ${err.message}`, "error", 9000);
+        throw err;
       } finally {
         draft.uploading = false;
       }
@@ -172,7 +179,11 @@ export default {
     async function goNext() {
       if (draft.step === 1) {
         if (draft.source === "upload" && !draft.materialized) {
-          await uploadAndMaterialize();
+          try {
+            await uploadAndMaterialize();
+          } catch {
+            return; // error already toasted; stay on the data step
+          }
         }
         draft.step = 2;
         return;
@@ -222,7 +233,13 @@ export default {
     }
 
     function buildPayload(extra) {
-      const training = { ...TRAINING_DEFAULTS, iterations: draft.iterations };
+      const training = {
+        ...TRAINING_DEFAULTS,
+        iterations: draft.iterations,
+        save_interval: draft.save_interval,
+        lmbda: draft.lmbda,
+        voxel_size: draft.voxel_size,
+      };
       return {
         algorithm_family: draft.family,
         operation: "train",
@@ -256,6 +273,7 @@ export default {
           confirmed_at: new Date().toISOString(),
         };
         const data = await submitRun(buildPayload({
+          preview_job_id: draft.preview.preview_job_id || "",
           output_dir: draft.preview.local_output_dir || "",
           path_confirmation: pathConfirmation,
           command_override: draft.preview.command_override || "",
@@ -342,7 +360,7 @@ export default {
             <div><strong>{{ $t("wiz.dropTitle") }}</strong> {{ $t("wiz.dropOr") }}</div>
             <div class="small" style="margin-top:2px">{{ $t("wiz.dropHint") }}</div>
           </div>
-          <input ref="fileInput" type="file" multiple accept="image/*" hidden
+          <input ref="fileInput" type="file" multiple accept=".png,.jpg,.jpeg" hidden
                  @change="addFiles($event.target.files); $event.target.value = ''" />
 
           <div v-if="draft.files.length" style="margin-top:14px">
@@ -357,7 +375,7 @@ export default {
             </div>
             <div class="chip-list" style="margin-bottom:12px">
               <span class="chip" v-for="f in draft.files.slice(0, 8)" :key="f.name">{{ f.name }}</span>
-              <span class="chip" v-if="draft.files.length > 8">+{{ draft.files.length - 8 }} more</span>
+              <span class="chip" v-if="draft.files.length > 8">+{{ draft.files.length - 8 }} {{ $t("wiz.moreFiles") }}</span>
             </div>
             <div v-if="draft.materialized" class="check-item ok">
               <icon name="check-circle"></icon>
@@ -387,7 +405,7 @@ export default {
               </div>
             </button>
             <ui-field :label="$t('wiz.customPath')" :hint="$t('wiz.customPathHint')">
-              <input class="input mono" v-model="draft.remoteDatasetPath" placeholder="/root/autodl-tmp/…/workspace" />
+              <input class="input mono" v-model="draft.remoteDatasetPath" @input="draft.selectedRemoteDatasetId = ''" placeholder="/root/autodl-tmp/…/workspace" />
             </ui-field>
           </div>
         </template>
@@ -472,7 +490,7 @@ export default {
             <div class="codeblock">{{ draft.preview.remote_command || draft.preview.shell_command || draft.preview.command_override }}</div>
           </div>
           <dl class="kv" style="margin-bottom:18px">
-            <dt>{{ $t("wiz.remoteOutput") }}</dt><dd class="mono">{{ draft.preview.output_dir || "-" }}</dd>
+            <dt>{{ $t("wiz.remoteOutput") }}</dt><dd class="mono">{{ draft.preview.remote_output_dir || "-" }}</dd>
             <dt>{{ $t("wiz.localDownload") }}</dt><dd class="mono">{{ draft.preview.local_output_dir || "-" }}</dd>
           </dl>
           <div class="row" style="justify-content:flex-end;gap:10px">

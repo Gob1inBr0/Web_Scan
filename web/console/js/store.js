@@ -2,6 +2,7 @@
 // toasts, and the hash router. One singleton imported by every page.
 
 import { getHealth, getJobs } from "./api.js";
+import { t } from "./i18n.js";
 
 const { reactive, watch } = Vue;
 
@@ -200,14 +201,14 @@ function announceTransitions(jobs) {
       store.unseenDone += 1;
       if (store.prefs.notifyOnDone && typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
-          new Notification(ok ? "Training finished" : "Training failed", {
+          new Notification(ok ? t("notify.finished") : t("notify.failed"), {
             body: `${name} · ${job.algorithm_family || ""} · ${job.status}`,
             tag: job.id,
           });
         } catch { /* notification failed silently */ }
       }
       toast(
-        ok ? `Training finished: ${name}` : `Training failed: ${name} (${job.status})`,
+        ok ? `${t("notify.finished")}: ${name}` : `${t("notify.failed")}: ${name} (${job.status})`,
         ok ? "success" : "error",
         8000,
       );
@@ -240,7 +241,9 @@ export function startPolling() {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       pollOnce();
-      if (!document.title.startsWith("WebScan")) document.title = "WebScan Console";
+      document.title = store.unseenDone
+        ? `(${store.unseenDone}) WebScan Console`
+        : "WebScan Console";
     }
   });
 }

@@ -1748,7 +1748,8 @@ class ApiHandler(SimpleHTTPRequestHandler):
     if not self._security_gate(require_api_token=parsed.path.startswith("/api/")):
       return
     if parsed.path in ("/", "/index.html", "/web/", "/web/index.html",
-                       "/web/console", "/web/console/", "/web/console/index.html"):
+                       "/web/console", "/web/console/", "/web/console/index.html",
+                       "/console", "/console/", "/console/index.html"):
       self._serve_index_with_token()
       return
     if parsed.path == "/api/health":

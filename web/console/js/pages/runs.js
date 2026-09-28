@@ -167,12 +167,14 @@ export default {
 
     async function doDelete() {
       if (!confirm(t("runs.deleteConfirm"))) return;
+      drawerBusy.value = true;
       try {
         await deleteJob(drawerId.value);
         toast(t("runs.deleted"), "success");
         closeDrawer();
         await pollOnce();
       } catch (err) { toast(`${t("runs.deleteFailed")} ${err.message}`, "error"); }
+      finally { drawerBusy.value = false; }
     }
 
     function renameRun() {
@@ -251,7 +253,7 @@ export default {
           <div class="grid-3">
             <ui-stat label="PSNR" :value="drawerJob.metrics?.psnr ? Number(drawerJob.metrics.psnr).toFixed(2) : '-'" />
             <ui-stat label="SSIM" :value="drawerJob.metrics?.ssim ? Number(drawerJob.metrics.ssim).toFixed(4) : '-'" />
-            <ui-stat label="Size" :value="formatBytes(drawerJob.metrics?.size_bytes || drawerJob.file_size)" />
+            <ui-stat :label="$t('runs.colSize')" :value="formatBytes(drawerJob.metrics?.size_bytes || drawerJob.file_size)" />
           </div>
 
           <div v-if="downloadPct !== null && downloadPct < 100" class="card" style="padding:12px 14px">
@@ -293,7 +295,7 @@ export default {
               <ui-button v-if="drawerJob.point_cloud_url || drawerJob.viewer_url" icon="box" @click="openInViewer">{{ $t("runs.view3d") }}</ui-button>
             </template>
             <span style="flex:1"></span>
-            <ui-button variant="ghost" icon="trash" @click="doDelete">{{ $t("runs.delete") }}</ui-button>
+            <ui-button v-if="isTerminal(drawerJob)" variant="ghost" icon="trash" @click="doDelete">{{ $t("runs.delete") }}</ui-button>
           </template>
         </ui-drawer>
       </template>

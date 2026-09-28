@@ -86,7 +86,7 @@ Web_Scan/
 | 浏览器 | Chrome / Edge / Safari / Firefox 现代版本 |
 | Python 依赖 | `flask`、`paramiko`、`numpy` |
 | 可选工具 | `COLMAP`、`ImageMagick`/`magick`、`nvidia-smi` |
-| 默认地址 | `http://127.0.0.1:8080/web/` |
+| 默认地址 | 新控制台（推荐）：`http://127.0.0.1:8080/web/console/` · 旧工作台：`http://127.0.0.1:8080/web/` |
 
 本地只运行 Web 界面、上传、任务编排和结果查看时，不强制要求 NVIDIA GPU。若在本机直接训练，需要安装对应算法的 CUDA、PyTorch 和扩展依赖。
 
@@ -157,7 +157,8 @@ python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ### 3. 打开 Web 页面
 
 ```text
-http://127.0.0.1:8080/web/
+http://127.0.0.1:8080/web/console/          # 新控制台（推荐）
+http://127.0.0.1:8080/web/                  # 旧工作台
 ```
 
 ### 4. 访问令牌（v0.2 起默认启用）

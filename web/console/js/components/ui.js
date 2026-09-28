@@ -231,7 +231,7 @@ const UiCopy = {
         this.copied = true;
         setTimeout(() => { this.copied = false; }, 1400);
       } catch {
-        toast("Copy failed — select the text manually", "error");
+        toast(t("runs.copyFailed"), "error");
       }
     },
   },

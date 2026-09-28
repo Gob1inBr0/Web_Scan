@@ -88,7 +88,7 @@ Web_Scan/
 | Browser | Current versions of Chrome / Edge / Safari / Firefox |
 | Python packages | `flask`, `paramiko`, `numpy` |
 | Optional tools | `COLMAP`, `ImageMagick`/`magick`, `nvidia-smi` |
-| Default address | `http://127.0.0.1:8080/web/` |
+| Default address | Console (recommended): `http://127.0.0.1:8080/web/console/` · Legacy workbench: `http://127.0.0.1:8080/web/` |
 
 The local machine only runs the web UI, uploads, job orchestration, and result viewing — no NVIDIA GPU is required. If you want to train locally, install the CUDA toolkit, PyTorch, and extension dependencies of the target algorithm.
 
@@ -159,7 +159,8 @@ python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ### 3. Open the Web Page
 
 ```text
-http://127.0.0.1:8080/web/
+http://127.0.0.1:8080/web/console/          # new console (recommended)
+http://127.0.0.1:8080/web/                  # legacy workbench
 ```
 
 ### 4. Access Token (enabled by default since v0.2)

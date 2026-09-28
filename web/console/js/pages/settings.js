@@ -13,10 +13,14 @@ export default {
     const editing = ref(null);       // profile being edited (copy)
     const pasteSsh = ref("");
     const passwordInput = ref("");
+    const passwordVersion = ref(0);  // sessionStorage is not reactive; bump to re-evaluate
     const notifySupported = typeof Notification !== "undefined";
 
     const active = computed(() => activeProfile());
-    const hasPassword = computed(() => Boolean(active.value && sessionPasswords.get(active.value.id)));
+    const hasPassword = computed(() => {
+      passwordVersion.value;  // track manual invalidation
+      return Boolean(active.value && sessionPasswords.get(active.value.id));
+    });
 
     function newProfile() {
       editing.value = defaultProfile();
@@ -73,6 +77,7 @@ export default {
       if (!active.value) { toast(t("set.needProfileFirst"), "error"); return; }
       sessionPasswords.set(active.value.id, passwordInput.value);
       passwordInput.value = "";
+      passwordVersion.value += 1;
       toast(t("set.passwordStored"), "success");
     }
 
@@ -118,7 +123,7 @@ export default {
                   :style="profile.id === store.activeProfileId ? 'color:var(--accent)' : ''"></icon>
             <div style="flex:1;min-width:0">
               <div class="ci-name">{{ profile.label || profile.host }}
-                <ui-badge v-if="profile.id === store.activeProfileId" kind="accent" style="margin-left:6px">active</ui-badge>
+                <ui-badge v-if="profile.id === store.activeProfileId" kind="accent" style="margin-left:6px">{{ $t("set.activeBadge") }}</ui-badge>
               </div>
               <div class="ci-msg mono">{{ profile.username }}@{{ profile.host }}:{{ profile.port }}</div>
             </div>

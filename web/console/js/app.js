@@ -42,10 +42,11 @@ const App = {
     );
     const profileLabel = computed(() => {
       const profile = activeProfile();
-      return profile ? (profile.label || profile.host || "No label") : t("nav.noProfile");
+      return profile ? (profile.label || profile.host || t("nav.noLabel")) : t("nav.noProfile");
     });
     const pageTitle = computed(() => t(PAGE_TITLES[store.route.page] || ""));
     onMounted(() => {
+      document.documentElement.lang = store.locale === "zh" ? "zh-CN" : "en";
       startPolling();
       checkHealth();
     });
@@ -87,7 +88,7 @@ const App = {
           <icon name="link" style="width:13px;height:13px"></icon>
           {{ store.locale === "zh" ? "EN" : "中文" }}
         </button>
-        <button class="conn-chip" @click="navigate('settings')" :title="'Active connection profile'">
+        <button class="conn-chip" @click="navigate('settings')" :title="t('nav.activeProfile')">
           <span class="dot" :class="{ on: store.profiles.length && store.apiOnline, warn: store.profiles.length && !store.apiOnline, off: !store.profiles.length }"></span>
           {{ profileLabel }}
           <icon name="chevron-down" style="width:13px;height:13px"></icon>

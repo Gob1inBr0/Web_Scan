@@ -2,7 +2,7 @@
 
 import { store, navigate, runName, toast } from "../store.js";
 import { t } from "../i18n.js";
-import { formatBytes } from "../components/ui.js";
+import { formatBytes, formatTime } from "../components/ui.js";
 
 const { computed, ref } = Vue;
 
@@ -10,7 +10,7 @@ const METRICS = [
   { key: "psnr", label: "PSNR (dB)", higherBetter: true, digits: 2 },
   { key: "ssim", label: "SSIM", higherBetter: true, digits: 4 },
   { key: "lpips", label: "LPIPS", higherBetter: false, digits: 4 },
-  { key: "size_mb", label: "Size (MB)", higherBetter: false, digits: 1 },
+  { key: "size_mb", labelKey: "ds.sizeMb", higherBetter: false, digits: 1 },
 ];
 
 function metricValue(job, key) {
@@ -26,7 +26,7 @@ function datasetLabel(job) {
     const parts = raw.split("/").filter(Boolean);
     // …/datasets/<family>/<dataset-id>/workspace → the dataset-id part.
     const withoutTail = parts[parts.length - 1] === "workspace" ? parts.slice(0, -1) : parts;
-    return withoutTail[withoutTail.length - 1] || raw || t("ds.unnamed");
+    return withoutTail[withoutTail.length - 1] || raw || "";
   }
   return raw;
 }
@@ -38,7 +38,7 @@ export default {
       const map = new Map();
       for (const job of store.jobs) {
         const label = datasetLabel(job);
-        if (!label || label === "(unnamed)" || label === t("ds.unnamed")) { /* skip */ }
+        if (!label) continue;
         if (!map.has(label)) map.set(label, []);
         map.get(label).push(job);
       }
@@ -109,7 +109,7 @@ export default {
             <div class="spread" style="margin-bottom:10px">
               <div class="row" style="gap:8px">
                 <icon name="layers" style="width:15px;height:15px;color:var(--accent)"></icon>
-                <strong class="small">{{ $t("ds.comparing") }} {{ compareJobs.length }} {{ $t("ds.runs") }}</strong>
+                <strong class="small">{{ $t("ds.comparing") }} {{ compareJobs.length }} {{ compareJobs.length === 1 ? $t("ds.run") : $t("ds.runs") }}</strong>
                 <button class="btn btn-ghost btn-sm" @click="picks = new Set()">{{ $t("ds.clear") }}</button>
               </div>
             </div>
@@ -125,7 +125,7 @@ export default {
               <thead><tr><th>{{ $t("ds.colMetric") }}</th><th v-for="job in compareJobs" :key="job.id">{{ runName(job) }}</th></tr></thead>
               <tbody>
                 <tr v-for="metric in METRICS" :key="metric.key">
-                  <td class="muted">{{ metric.label }}</td>
+                  <td class="muted">{{ metric.labelKey ? $t(metric.labelKey) : metric.label }}</td>
                   <td v-for="job in compareJobs" :key="job.id" class="num">
                     <template v-if="metricValue(job, metric.key) !== null">
                       {{ metricValue(job, metric.key).toFixed(metric.digits) }}
@@ -181,9 +181,3 @@ export default {
   `,
 };
 
-function formatTime(value) {
-  const ts = Number(value);
-  if (!Number.isFinite(ts) || ts <= 0) return "-";
-  const date = new Date(ts * 1000);
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-}
