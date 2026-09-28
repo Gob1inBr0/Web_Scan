@@ -4,8 +4,12 @@
 # 保留 gitignore 自己
 !.gitignore
 
-# 保留主目录下的 change.md
-!/change.md
+# 保留许可证
+!/LICENSE
+
+# 保留 CI 工作流
+!/.github/
+!/.github/**
 
 # 保留 README 及其中文备份
 !/README.md
@@ -41,6 +45,11 @@
 /web/_backup/
 /web/generated/
 /web/test1/
+
+# 忽略本机安全凭据与配置（访问令牌、SSH 主机指纹、安全开关）
+/web/config/server.token
+/web/config/ssh_known_hosts.json
+/web/config/security.json
 /web/**/__pycache__/
 /web/**/*.py[co]
 /web/**/*.log

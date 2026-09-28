@@ -48,6 +48,7 @@
 | **MEGS-2** | 内存高效 Gaussian 表示 | `MEGS-2-main/setup_env.sh` |
 | **reduced-3dgs** | 降低显存和存储占用 | `reduced-3dgs-main/setup_env.sh` |
 | **AtomGS** | 原子化 Gaussian 表示 | `AtomGS-main/setup_env.sh` |
+| **FCGS** | 特征压缩码流管线（经 CompGS 包装器训练，含编解码） | `FCGS-main/`（见 `web/project_md/fcgs/`） |
 
 ## 项目结构
 
@@ -58,8 +59,9 @@ Web_Scan/
 │   ├── styles.css                       # 页面样式
 │   ├── src/                             # 前端模块
 │   ├── server/                          # Python API 服务
-│   ├── tools/                           # 数据处理、导出和测试工具
+│   ├── tools/                           # 数据处理、导出与测试工具（run_tests.py 一键跑全部测试）
 │   ├── config/                          # 算法适配器配置
+│   ├── docs/                            # 功能指南（如 PLY 快速加载）
 │   ├── scenes/                          # 示例场景
 │   └── viewers/                         # 结果查看器
 ├── web照片/                              # README 使用的界面截图
@@ -143,7 +145,7 @@ source /path/to/miniconda3/etc/profile.d/conda.sh
 ### 1. 安装 Web 服务依赖
 
 ```bash
-python3.10 -m pip install flask paramiko numpy
+python3.10 -m pip install paramiko numpy
 ```
 
 ### 2. 启动 API 和静态服务
@@ -158,7 +160,22 @@ python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 http://127.0.0.1:8080/web/
 ```
 
-### 4. 首次运行流程
+### 4. 访问令牌（v0.2 起默认启用）
+
+服务启动时会自动生成访问令牌，保存在 `web/config/server.token`（权限 0600），同时打印到控制台。浏览器打开上面地址即可自动获得令牌；命令行调用接口需要带上令牌：
+
+```bash
+curl -H "X-Auth-Token: <令牌>" http://127.0.0.1:8080/api/health
+```
+
+相关选项与配置：
+
+- `--token <值>`：显式指定令牌；`--no-auth`：关闭令牌校验（不建议）。
+- `--allowed-host 192.168.1.10,myhost.local`：需要从局域网用其他主机名访问时，把对应主机名加入允许列表（默认只接受 127.0.0.1、localhost 和绑定的地址）。
+- 跨域请求一律拒绝（不再返回 `Access-Control-Allow-Origin: *`），静态文件只暴露 `web/` 子目录。
+- `web/config/security.json`（可选）：`{"allow_command_override": false, "extra_allowed_roots": ["/path/to/dir"]}`，分别控制 `command_override` 开关和结果文件读取的额外目录白名单。
+
+### 5. 首次运行流程
 
 1. 在 `Data` 中选择 `New Image Upload` 上传图片，或选择已有远程数据。
 2. 在远程配置区域填写 Host、Port、Username、Password、Repo Path、Workspace Root 和 Output Root。
@@ -196,8 +213,11 @@ Web 端交互式查看与指标分析
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/load-ply \
-  -F "ply_file=@scene.ply"
+  -H "X-Auth-Token: <令牌>" -H "Content-Type: application/json" \
+  -d '{"ply_path": "/绝对路径/scene.ply"}'
 ```
+
+接口只接受项目目录（或 `web/config/security.json` 中 `extra_allowed_roots` 列出的目录）内的路径。
 
 ### 查看任务日志和指标
 
@@ -239,6 +259,23 @@ tmc3 --help
 - 数据集建议保持路径无空格，便于远程命令和日志排查。
 - 同一台 GPU 服务器不要同时提交过多任务，避免显存争抢。
 - 重要结果应从 `web/generated/runs/` 或远程输出目录单独备份。
+
+## 开发与测试
+
+手写测试套件覆盖远程执行、断点续传、流程数据、任务清理和 PLY 加载：
+
+```bash
+python3 web/tools/run_tests.py            # 跑全部测试模块
+python3 web/tools/run_tests.py detached   # 按关键字跑单个模块
+```
+
+改动涉及 `web/` 的推送会自动触发 GitHub Actions 跑同一套测试加前端语法检查（`.github/workflows/tests.yml`）。
+
+### 服务端模块划分
+
+- `web/server/api_server.py` — HTTP 路由、任务编排、结果发现。
+- `web/server/web_security.py` — 访问令牌、同源校验、结果目录白名单、JSON/错误响应。
+- `web/server/remote_executor.py` — SSH/SFTP 执行、远程脚本生成、tmux 后台任务、结果下载。
 
 ## 许可证
 

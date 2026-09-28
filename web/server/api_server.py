@@ -7,9 +7,11 @@ import csv
 import io
 import importlib.util
 import json
+import logging
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -62,8 +64,51 @@ from web.server.remote_executor import (
   validate_remote_config,
 )
 from web.tools.export_scene_package import build_scene_package
+from web.server.web_security import (
+  MANUAL_ZH_URL,
+  SECURITY_CONFIG_FILE,
+  SECURITY_STATE,
+  SERVER_TOKEN_FILE,
+  STREAM_FRAME_MAX_BYTES,
+  UPLOAD_IMAGE_EXTENSIONS,
+  allowed_host_values,
+  allowed_result_roots,
+  build_error_payload,
+  ensure_server_token,
+  error_response,
+  json_response,
+  load_security_config,
+  path_is_inside,
+  request_host_allowed,
+  request_origin_allowed,
+  request_token_valid,
+  result_path_is_allowed,
+  security_flag,
+)
+
+LOGGER = logging.getLogger("webscan")
+
+
+
+def validated_session_id(value: Any) -> str:
+  resolved = str(value or "").strip() or "default-session"
+  if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}", resolved):
+    raise ValueError(f"Invalid session_id: {resolved!r}")
+  # Also rejects ".." and any path escaping the streams directory.
+  safe_generated_child(STREAM_DIR, resolved)
+  return resolved
+
+
+def validated_capture_id(value: Any) -> str:
+  resolved = str(value or "").strip()
+  if not resolved:
+    return ""
+  if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", resolved):
+    raise ValueError(f"Invalid capture_id: {resolved!r}")
+  return resolved
 
 JOBS: Dict[str, Dict[str, Any]] = {}
+JOBS_LOCK = threading.Lock()
 JOB_LOG_LOCKS: Dict[str, threading.Lock] = {}
 RESULT_DOWNLOAD_LOCK = threading.Lock()
 REMOTE_MONITOR_START_LOCK = threading.Lock()
@@ -99,7 +144,6 @@ ARTIFACT_RESULT_FIELDS = (
 )
 REMOTE_RESULT_IDENTITY_FIELDS = ("host", "port", "username", "output_root")
 
-MANUAL_ZH_URL = "/web/WEB_TRAINING_MANUAL_ZH.md"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 PLY_EXTENSIONS = {".ply"}
 PLY_HEADER_READ_BYTES = 256 * 1024
@@ -521,15 +565,20 @@ def persist_job_state(job: Dict[str, Any]) -> None:
   job_id = str(job.get("id", "")).strip()
   if not job_id:
     return
-  ensure_job_logging(job)
-  job_dir = Path(str(job.get("log_dir", "")))
-  if not job_dir:
-    return
-  payload = sanitize_job_for_persistence(job)
-  target = job_dir / JOB_STATE_FILE
-  tmp = job_dir / f".{JOB_STATE_FILE}.tmp"
-  tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-  tmp.replace(target)
+  try:
+    ensure_job_logging(job)
+    job_dir = Path(str(job.get("log_dir", "")))
+    if not job_dir:
+      return
+    payload = sanitize_job_for_persistence(job)
+    target = job_dir / JOB_STATE_FILE
+    # Unique tmp name: two threads persisting the same job must not clobber each other's temp file.
+    tmp = job_dir / f".{JOB_STATE_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(target)
+  except Exception:
+    # Persistence must never take down a running job thread; surface it in server logs.
+    LOGGER.exception("Failed to persist job state for %s", job_id)
 
 
 def load_persisted_jobs() -> None:
@@ -539,6 +588,7 @@ def load_persisted_jobs() -> None:
     try:
       payload = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
+      LOGGER.warning("Skipping unreadable job state file: %s", state_path)
       continue
     if not isinstance(payload, dict):
       continue
@@ -729,20 +779,37 @@ def _resolve_capture_input_dir(session_dir: Path, capture_id: str = "") -> tuple
 
 
 def save_stream_frame(session_id: str, image_data: str, filename: str, capture_id: str = "") -> Dict[str, str]:
-  session_dir = STREAM_DIR / session_id
+  resolved_session = str(session_id or "").strip() or "default-session"
+  session_dir = safe_generated_child(STREAM_DIR, resolved_session)
   resolved_capture_id = str(capture_id or "").strip() or _generate_capture_id()
-  input_dir = session_dir / "captures" / resolved_capture_id / "input"
-  output_dir = session_dir / "output"
-  input_dir.mkdir(parents=True, exist_ok=True)
-  output_dir.mkdir(parents=True, exist_ok=True)
+  if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", resolved_capture_id):
+    resolved_capture_id = _generate_capture_id()
+
+  safe_name = Path(str(filename or "").strip().replace("\\", "/")).name
+  if not safe_name or safe_name.startswith("."):
+    raise ValueError("Invalid upload filename.")
+  if Path(safe_name).suffix.lower() not in UPLOAD_IMAGE_EXTENSIONS:
+    raise ValueError("Only .png, .jpg, or .jpeg image uploads are allowed.")
 
   if "," in image_data:
     _, encoded = image_data.split(",", 1)
   else:
     encoded = image_data
-  binary = base64.b64decode(encoded)
+  try:
+    binary = base64.b64decode(encoded)
+  except Exception as exc:
+    raise ValueError("Invalid base64 image payload.") from exc
+  if not binary:
+    raise ValueError("Empty image payload.")
+  if len(binary) > STREAM_FRAME_MAX_BYTES:
+    raise ValueError(f"Image exceeds the {STREAM_FRAME_MAX_BYTES // (1024 * 1024)} MB upload limit.")
 
-  input_path = input_dir / filename
+  input_dir = safe_generated_child(session_dir, "captures", resolved_capture_id, "input")
+  output_dir = safe_generated_child(session_dir, "output")
+  input_dir.mkdir(parents=True, exist_ok=True)
+  output_dir.mkdir(parents=True, exist_ok=True)
+
+  input_path = input_dir / safe_name
   input_path.write_bytes(binary)
 
   # Default fallback preview: mirror the latest input frame until an algorithm writes output.
@@ -1679,17 +1746,10 @@ def build_viewer_url(relative_url: str, representation: str | None = None, rende
   return f"/web/viewers/{renderer}.html?url={relative_url}"
 
 
-def path_is_inside(path: Path, parent: Path) -> bool:
-  try:
-    path.resolve().relative_to(parent.resolve())
-    return True
-  except ValueError:
-    return False
-
-
 def file_url_for_path(path: Path, cache_group: str = "files") -> str:
   resolved = path.resolve()
-  if path_is_inside(resolved, ROOT_DIR):
+  if path_is_inside(resolved, WEB_DIR):
+    # Static serving is rooted at WEB_DIR (see ApiHandler.translate_path).
     return "/" + str(resolved.relative_to(ROOT_DIR)).replace("\\", "/")
 
   cache_dir = WEB_DIR / "generated" / "result_cache" / cache_group
@@ -1702,7 +1762,10 @@ def file_url_for_path(path: Path, cache_group: str = "files") -> str:
   ).hex[:12]
   cache_path = cache_dir / f"{resolved.stem}_{digest}{suffix}"
   if not cache_path.exists():
-    shutil.copy2(resolved, cache_path)
+    try:
+      os.link(resolved, cache_path)
+    except OSError:
+      shutil.copy2(resolved, cache_path)
   return "/" + str(cache_path.relative_to(ROOT_DIR)).replace("\\", "/")
 
 
@@ -2833,6 +2896,21 @@ def load_result_path(path_value: str, family: str | None = None, representation:
   resolved_family = infer_family_for_path(resolved, family)
   resolved_representation = representation_for_family(resolved_family, representation)
 
+  if not result_path_is_allowed(resolved):
+    reason = (
+      f"Path is outside the allowed result roots: {resolved}. "
+      "Add extra directories to web/config/security.json (extra_allowed_roots) if needed."
+    )
+    return {
+      "ok": False,
+      "type": "",
+      "family": resolved_family,
+      "reason": reason,
+      "error": reason,
+      "path": str(path_value or ""),
+      "resolved_path": str(resolved),
+    }
+
   if not resolved.exists():
     reason = f"Result path does not exist: {path_value}"
     return {
@@ -2922,6 +3000,16 @@ def load_ply_file(ply_path: str, representation: str | None = None) -> Dict[str,
     ply_file = Path(ply_path).resolve()
 
     # Keep path handling explicit so load failures can be explained clearly.
+    if not result_path_is_allowed(ply_file):
+      return {
+        "ok": False,
+        "error": (
+          f"Path is outside the allowed result roots: {ply_file}. "
+          "Add extra directories to web/config/security.json (extra_allowed_roots) if needed."
+        ),
+        "path": ply_path,
+      }
+
     if not (ply_file.exists()):
       return {
         "ok": False,
@@ -3126,67 +3214,10 @@ def read_runtime_artifacts(
   return payload
 
 
-def json_response(handler: "ApiHandler", payload: Dict[str, Any], status: int = 200) -> None:
-  body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-  handler.send_response(status)
-  handler.send_header("Content-Type", "application/json; charset=utf-8")
-  handler.send_header("Content-Length", str(len(body)))
-  handler.send_header("Access-Control-Allow-Origin", "*")
-  handler.send_header("Access-Control-Allow-Headers", "Content-Type")
-  handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-  handler.end_headers()
-  handler.wfile.write(body)
 
 
-def build_error_payload(
-  *,
-  code: str,
-  step: str,
-  message: str,
-  reason: str = "",
-  details: Dict[str, Any] | None = None,
-  manual_anchor: str = "",
-  next_action: str = "",
-) -> Dict[str, Any]:
-  return {
-    "ok": False,
-    "error": message,
-    "code": code,
-    "step": step,
-    "message": message,
-    "reason": reason or message,
-    "details": details or {},
-    "manual_url": MANUAL_ZH_URL,
-    "manual_anchor": manual_anchor,
-    "next_action": next_action,
-  }
 
 
-def error_response(
-  handler: "ApiHandler",
-  *,
-  code: str,
-  step: str,
-  message: str,
-  status: int = 400,
-  reason: str = "",
-  details: Dict[str, Any] | None = None,
-  manual_anchor: str = "",
-  next_action: str = "",
-) -> None:
-  json_response(
-    handler,
-    build_error_payload(
-      code=code,
-      step=step,
-      message=message,
-      reason=reason,
-      details=details,
-      manual_anchor=manual_anchor,
-      next_action=next_action,
-    ),
-    status=status,
-  )
 
 
 def extract_remote_config_input(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -3352,13 +3383,15 @@ def unique_remote_run_key(base_run_key: str, job_id: str) -> str:
   run_key = str(base_run_key or "").strip()
   if not run_key:
     return ""
-  if not any(str(job.get("remote_run_key", "")).strip() == run_key for job in list(JOBS.values())):
-    return run_key
-  suffix = str(job_id or "").strip().replace("_", "-")[:8].strip("-") or uuid.uuid4().hex[:8]
-  candidate = f"{run_key}-{suffix}"
-  if not any(str(job.get("remote_run_key", "")).strip() == candidate for job in list(JOBS.values())):
-    return candidate
-  return f"{run_key}-{uuid.uuid4().hex[:8]}"
+  # Check-then-act must be atomic: two concurrent submissions could else pick the same key.
+  with JOBS_LOCK:
+    if not any(str(job.get("remote_run_key", "")).strip() == run_key for job in JOBS.values()):
+      return run_key
+    suffix = str(job_id or "").strip().replace("_", "-")[:8].strip("-") or uuid.uuid4().hex[:8]
+    candidate = f"{run_key}-{suffix}"
+    if not any(str(job.get("remote_run_key", "")).strip() == candidate for job in JOBS.values()):
+      return candidate
+    return f"{run_key}-{uuid.uuid4().hex[:8]}"
 
 
 def effective_auto_colmap(auto_colmap: Any, use_existing_remote_dataset: Any) -> bool:
@@ -3385,7 +3418,7 @@ def build_remote_algorithm_preview(payload: Dict[str, Any]) -> Dict[str, Any]:
   command_template = operation_command_template(adapter, operation)
   remote_config = validate_remote_config(extract_remote_config_input(payload))
 
-  session_id = str(payload.get("session_id", "default-session")).strip() or "default-session"
+  session_id = validated_session_id(payload.get("session_id", "default-session"))
   dataset_name = str(payload.get("dataset_name", "")).strip() or session_id
   preview_job_id = str(payload.get("preview_job_id", "")).strip() or f"preview-{uuid.uuid4().hex[:8]}"
   remote_run_key = build_remote_run_key(dataset_name, family, time.time())
@@ -3515,9 +3548,6 @@ def file_download_response(
   handler.send_header("Content-Type", content_type)
   handler.send_header("Content-Length", str(len(body)))
   handler.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
-  handler.send_header("Access-Control-Allow-Origin", "*")
-  handler.send_header("Access-Control-Allow-Headers", "Content-Type")
-  handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
   handler.end_headers()
   handler.wfile.write(body)
 
@@ -3528,9 +3558,6 @@ def csv_text_response(handler: "ApiHandler", text: str, *, download_name: str) -
   handler.send_header("Content-Type", "text/csv; charset=utf-8")
   handler.send_header("Content-Length", str(len(body)))
   handler.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
-  handler.send_header("Access-Control-Allow-Origin", "*")
-  handler.send_header("Access-Control-Allow-Headers", "Content-Type")
-  handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
   handler.end_headers()
   handler.wfile.write(body)
 
@@ -3644,6 +3671,39 @@ def normalize_job_dataset_fields(job: Dict[str, Any]) -> Dict[str, str]:
   }
 
 
+ENRICH_ARTIFACTS_CACHE: Dict[tuple, tuple] = {}
+ENRICH_ARTIFACTS_TTL_SECONDS = 2.0
+ENRICH_CACHE_LOCK = threading.Lock()
+
+
+def read_runtime_artifacts_cached(job: Dict[str, Any]) -> Dict[str, Any]:
+  """read_runtime_artifacts with a short TTL.
+
+  /api/jobs enriches every job on every request (each a full output-dir walk),
+  and the training log reader rescanned artifacts per output line. A 2s TTL
+  removes the duplicated scans while keeping polled metrics effectively fresh.
+  """
+  key = (
+    str(job.get("output_dir", "")),
+    str(job.get("representation", "")),
+    str(job.get("algorithm_family", "")),
+    str(job.get("id", "")),
+  )
+  now = time.monotonic()
+  with ENRICH_CACHE_LOCK:
+    cached = ENRICH_ARTIFACTS_CACHE.get(key)
+    if cached and now - cached[0] < ENRICH_ARTIFACTS_TTL_SECONDS:
+      return cached[1]
+  artifacts = read_runtime_artifacts(
+    job.get("output_dir"), job.get("representation"), job.get("algorithm_family"), job
+  )
+  with ENRICH_CACHE_LOCK:
+    if len(ENRICH_ARTIFACTS_CACHE) > 512:
+      ENRICH_ARTIFACTS_CACHE.clear()
+    ENRICH_ARTIFACTS_CACHE[key] = (now, artifacts)
+  return artifacts
+
+
 def enrich_job(job: Dict[str, Any]) -> Dict[str, Any]:
   ensure_job_logging(job)
   if mark_stale_remote_download_if_needed(job):
@@ -3663,7 +3723,7 @@ def enrich_job(job: Dict[str, Any]) -> Dict[str, Any]:
     cleaned_top_sources.pop("render_fps", None)
     enriched["analysis_metric_sources"] = cleaned_top_sources
   if not is_remote_download_pending(enriched):
-    artifacts = read_runtime_artifacts(enriched.get("output_dir"), enriched.get("representation"), enriched.get("algorithm_family"), enriched)
+    artifacts = read_runtime_artifacts_cached(enriched)
     existing_metrics = dict(enriched.get("metrics", {})) if isinstance(enriched.get("metrics"), dict) else {}
     for strict_key in (
       "psnr",
@@ -3961,10 +4021,11 @@ def prune_job_history() -> None:
     if len(keep_ids) >= MAX_JOB_HISTORY:
       break
 
-  for job_id in list(JOBS.keys()):
-    if job_id not in keep_ids:
-      del JOBS[job_id]
-      JOB_LOG_LOCKS.pop(job_id, None)
+  with JOBS_LOCK:
+    for job_id in list(JOBS.keys()):
+      if job_id not in keep_ids:
+        del JOBS[job_id]
+        JOB_LOG_LOCKS.pop(job_id, None)
 
 
 def is_job_terminal(job: Dict[str, Any]) -> bool:
@@ -4857,7 +4918,7 @@ def start_job_thread(job: Dict[str, Any], command: str, cwd: str | None = None) 
         append_job_log_line(job, channel, line)
         combined_log.append(line)
         job["metrics"] = extract_job_metrics("".join(combined_log[-2000:]))
-        artifacts = read_runtime_artifacts(job.get("output_dir"), job.get("representation"), job.get("algorithm_family"), job)
+        artifacts = read_runtime_artifacts_cached(job)
         if artifacts.get("metrics"):
           job["metrics"] = {
             **job.get("metrics", {}),
@@ -4936,6 +4997,7 @@ def start_job_thread(job: Dict[str, Any], command: str, cwd: str | None = None) 
         job["status"] = "completed" if return_code == 0 else "failed"
     except Exception as exc:  # pragma: no cover
       job["status"] = "canceled" if job.get("cancel_requested") else "failed"
+      LOGGER.exception("Local job %s failed", job.get("id", ""))
       append_job_log_line(job, "stderr", str(exc))
       job["stderr"] = str(exc)
     finally:
@@ -5067,6 +5129,7 @@ def start_remote_job_thread(
         persist_job_state(job)
         start_remote_monitor_thread(job, remote_config)
     except Exception as exc:  # pragma: no cover - network/runtime dependent
+      LOGGER.exception("Remote job %s failed", job.get("id", ""))
       if job.get("cancel_requested") or getattr(exc, "code_hint", "") == "WGSC-JOB-CANCELED":
         job["status"] = "canceled"
         job["remote_stage"] = "canceled"
@@ -5085,7 +5148,81 @@ def start_remote_job_thread(
 
 class ApiHandler(SimpleHTTPRequestHandler):
   def __init__(self, *args, **kwargs):
-    super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
+    super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+  def translate_path(self, path: str) -> str:
+    # Static serving is restricted to WEB_DIR. Both "/x" and legacy "/web/x"
+    # style URLs resolve to WEB_DIR/x; ".." segments are dropped.
+    parsed = urlparse(path)
+    parts = [part for part in parsed.path.split("/") if part and part not in (".", "..")]
+    if parts and parts[0] == "web":
+      parts = parts[1:]
+    if not parts:
+      parts = ["index.html"]
+    if self._static_path_denied(parts):
+      return str(WEB_DIR / "__denied__")
+    return str(WEB_DIR.joinpath(*parts))
+
+  @staticmethod
+  def _static_path_denied(parts: list) -> bool:
+    # Never serve credentials, server code, internal tooling, or job state files.
+    if any(part.startswith(".") for part in parts):
+      return True
+    if parts[0] in {"server", "tools", "config", "project_md", "_backup"}:
+      return True
+    if len(parts) >= 2 and parts[0] == "generated" and parts[1] == "job_logs":
+      return True
+    return False
+
+  def _security_gate(self, *, require_api_token: bool) -> bool:
+    if not request_host_allowed(self):
+      allowed = ", ".join(sorted(SECURITY_STATE["allowed_host_values"]))
+      LOGGER.warning("Rejected request with unknown Host header: %s %s", self.command, self.path)
+      json_response(
+        self,
+        {"ok": False, "error": f"Unknown Host header. Allowed hosts: {allowed}"},
+        status=403,
+      )
+      return False
+    if not request_origin_allowed(self):
+      LOGGER.warning("Rejected cross-origin request: %s %s", self.command, self.path)
+      json_response(self, {"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
+      return False
+    if require_api_token and not request_token_valid(self):
+      LOGGER.warning("Rejected request without valid token: %s %s", self.command, self.path)
+      json_response(
+        self,
+        {
+          "ok": False,
+          "error": (
+            "Missing or invalid access token. Open the workbench via the served web page, "
+            "or pass the X-Auth-Token header (the token is printed at server start and "
+            "stored in web/config/server.token)."
+          ),
+        },
+        status=401,
+      )
+      return False
+    return True
+
+  def _serve_index_with_token(self) -> None:
+    try:
+      html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    except OSError:
+      self.send_error(HTTPStatus.NOT_FOUND)
+      return
+    token = SECURITY_STATE["token"] if SECURITY_STATE["auth_enabled"] else ""
+    snippet = f"<script>window.__WEBSCAN_API_TOKEN__ = {json.dumps(token)};</script>"
+    if "</head>" in html:
+      html = html.replace("</head>", f"  {snippet}\n</head>", 1)
+    else:
+      html = snippet + html
+    body = html.encode("utf-8")
+    self.send_response(HTTPStatus.OK)
+    self.send_header("Content-Type", "text/html; charset=utf-8")
+    self.send_header("Content-Length", str(len(body)))
+    self.end_headers()
+    self.wfile.write(body)
 
   def _disable_static_cache(self) -> None:
     for header in ("If-Modified-Since", "If-None-Match"):
@@ -5093,17 +5230,15 @@ class ApiHandler(SimpleHTTPRequestHandler):
         del self.headers[header]
 
   def end_headers(self) -> None:
-    self.send_header("Access-Control-Allow-Origin", "*")
     self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
     self.send_header("Pragma", "no-cache")
     self.send_header("Expires", "0")
     super().end_headers()
 
   def do_OPTIONS(self) -> None:
+    # Same-origin requests never preflight; cross-origin preflights get no
+    # Access-Control headers and are therefore rejected by the browser.
     self.send_response(HTTPStatus.NO_CONTENT)
-    self.send_header("Access-Control-Allow-Origin", "*")
-    self.send_header("Access-Control-Allow-Headers", "Content-Type")
-    self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     self.end_headers()
 
   def do_HEAD(self) -> None:
@@ -5113,6 +5248,11 @@ class ApiHandler(SimpleHTTPRequestHandler):
   def do_GET(self) -> None:
     parsed = urlparse(self.path)
     query = parse_qs(parsed.query)
+    if not self._security_gate(require_api_token=parsed.path.startswith("/api/")):
+      return
+    if parsed.path in ("/", "/index.html", "/web/", "/web/index.html"):
+      self._serve_index_with_token()
+      return
     if parsed.path == "/api/health":
       json_response(self, {
         "ok": True,
@@ -5256,6 +5396,8 @@ class ApiHandler(SimpleHTTPRequestHandler):
 
   def do_POST(self) -> None:
     parsed = urlparse(self.path)
+    if not self._security_gate(require_api_token=True):
+      return
     length = int(self.headers.get("Content-Length", "0"))
     raw = self.rfile.read(length) if length else b"{}"
     try:
@@ -5787,6 +5929,19 @@ class ApiHandler(SimpleHTTPRequestHandler):
         )
         return
 
+      if str(payload.get("command_override", "")).strip() and not security_flag("allow_command_override"):
+        error_response(
+          self,
+          code="WGSC-STEP5-OVERRIDE-001",
+          step="step5",
+          message=(
+            "command_override is disabled by the security configuration. "
+            "Set \"allow_command_override\": true in web/config/security.json to enable it."
+          ),
+          status=403,
+        )
+        return
+
       operation = payload.get("operation", "train")
       try:
         command_template = operation_command_template(definition, operation)
@@ -5803,8 +5958,18 @@ class ApiHandler(SimpleHTTPRequestHandler):
         )
         return
 
-      session_id = str(payload.get("session_id", "default-session"))
-      capture_id = str(payload.get("capture_id", "")).strip()
+      try:
+        session_id = validated_session_id(payload.get("session_id", "default-session"))
+      except ValueError as exc:
+        error_response(
+          self,
+          code="WGSC-REQUEST-SESSION-001",
+          step="request",
+          message=str(exc),
+          status=400,
+        )
+        return
+      capture_id = validated_capture_id(payload.get("capture_id", ""))
       dataset_name = str(payload.get("dataset_name", "")).strip()
       auto_materialize = bool(payload.get("auto_materialize", True))
       auto_colmap = bool(payload.get("auto_colmap", True))
@@ -5898,6 +6063,7 @@ class ApiHandler(SimpleHTTPRequestHandler):
         )
         return
 
+      command_override = str(payload.get("command_override", "")).strip()
       require_preflight = bool(payload.get("require_remote_check", True))
       preflight_report = None
       if require_preflight:
@@ -6216,8 +6382,18 @@ class ApiHandler(SimpleHTTPRequestHandler):
       return
 
     if parsed.path == "/api/stream-frame":
-      session_id = payload.get("session_id", "default-session")
-      capture_id = str(payload.get("capture_id", "")).strip()
+      try:
+        session_id = validated_session_id(payload.get("session_id", "default-session"))
+        capture_id = validated_capture_id(payload.get("capture_id", ""))
+      except ValueError as exc:
+        error_response(
+          self,
+          code="WGSC-REQUEST-SESSION-001",
+          step="request",
+          message=str(exc),
+          status=400,
+        )
+        return
       family = payload.get("algorithm_family", "")
       if not payload.get("image_data"):
         error_response(
@@ -6319,7 +6495,18 @@ class ApiHandler(SimpleHTTPRequestHandler):
       return
 
     if parsed.path == "/api/materialize-session":
-      session_id = payload.get("session_id", "default-session")
+      try:
+        session_id = validated_session_id(payload.get("session_id", "default-session"))
+        capture_id = validated_capture_id(payload.get("capture_id", ""))
+      except ValueError as exc:
+        error_response(
+          self,
+          code="WGSC-REQUEST-SESSION-001",
+          step="request",
+          message=str(exc),
+          status=400,
+        )
+        return
       try:
         result = materialize_stream_session(
           session_id,
@@ -6340,14 +6527,24 @@ class ApiHandler(SimpleHTTPRequestHandler):
       return
 
     if parsed.path == "/api/prepare-colmap-workspace":
-      session_id = payload.get("session_id", "default-session")
+      try:
+        session_id = validated_session_id(payload.get("session_id", "default-session"))
+      except ValueError as exc:
+        error_response(
+          self,
+          code="WGSC-REQUEST-SESSION-001",
+          step="request",
+          message=str(exc),
+          status=400,
+        )
+        return
       family = payload.get("algorithm_family", "vanilla-3dgs")
       try:
         result = prepare_colmap_workspace(
           session_id,
           family,
           payload.get("repo_path"),
-          capture_id=str(payload.get("capture_id", "")).strip(),
+          capture_id=validated_capture_id(payload.get("capture_id", "")),
           dataset_name=str(payload.get("dataset_name", "")).strip(),
         )
         json_response(self, {"ok": True, "code": "WGSC-STEP3-WORKSPACE-OK", "step": "step3", "result": result})
@@ -6363,7 +6560,17 @@ class ApiHandler(SimpleHTTPRequestHandler):
       return
 
     if parsed.path == "/api/run-capture-pipeline":
-      session_id = payload.get("session_id", "default-session")
+      try:
+        session_id = validated_session_id(payload.get("session_id", "default-session"))
+      except ValueError as exc:
+        error_response(
+          self,
+          code="WGSC-REQUEST-SESSION-001",
+          step="request",
+          message=str(exc),
+          status=400,
+        )
+        return
       family = payload.get("algorithm_family", "vanilla-3dgs")
       output_dir = payload.get("output_dir", "")
       repo_path = resolve_workspace_path(payload.get("repo_path", ""))
@@ -6457,14 +6664,41 @@ class ApiHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-  parser = argparse.ArgumentParser(description="Run the Gaussian Encoding web server.")
+  parser = argparse.ArgumentParser(description="Run the Web_Scan web server.")
   parser.add_argument("--host", default="127.0.0.1")
   parser.add_argument("--port", type=int, default=8080)
+  parser.add_argument(
+    "--token",
+    default="",
+    help="Set the API access token (default: generated once and persisted in web/config/server.token).",
+  )
+  parser.add_argument("--no-auth", action="store_true", help="Disable API token checks (not recommended).")
+  parser.add_argument(
+    "--allowed-host",
+    default="",
+    help="Comma-separated extra Host values to accept, e.g. --allowed-host 192.168.1.10,myserver.local (for LAN access).",
+  )
   args = parser.parse_args()
+
+  token = ensure_server_token(args.token)
+  SECURITY_STATE["auth_enabled"] = not args.no_auth
+  extra_hosts = [item for item in load_security_config().get("allowed_hosts", []) if isinstance(item, str)]
+  extra_hosts += [item for item in str(args.allowed_host or "").split(",")]
+  SECURITY_STATE["allowed_host_values"] = allowed_host_values(args.host, args.port, extra_hosts)
 
   load_persisted_jobs()
   server = ThreadingHTTPServer((args.host, args.port), ApiHandler)
+  logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+  )
   print(f"Serving web app at http://{args.host}:{args.port}/web/")
+  if SECURITY_STATE["auth_enabled"]:
+    print(f"API access token: {token}")
+    print("The token is stored in web/config/server.token and injected into the served page automatically.")
+    print(f"curl example: curl -H 'X-Auth-Token: {token}' http://{args.host}:{args.port}/api/health")
+  else:
+    print("WARNING: API token auth is DISABLED (--no-auth). Do not expose this server beyond loopback.")
   server.serve_forever()
 
 

@@ -50,6 +50,7 @@ Screenshots are located in [`web照片/`](web照片/).
 | **MEGS-2** | Memory-efficient Gaussian representation | `MEGS-2-main/setup_env.sh` |
 | **reduced-3dgs** | Reduced VRAM and storage footprint | `reduced-3dgs-main/setup_env.sh` |
 | **AtomGS** | Atomized Gaussian representation | `AtomGS-main/setup_env.sh` |
+| **FCGS** | Feature-compressed Gaussian bitstream pipeline (train via CompGS wrapper; encode/decode) | `FCGS-main/` (see `web/project_md/fcgs/`) |
 
 ## Project Structure
 
@@ -60,8 +61,9 @@ Web_Scan/
 │   ├── styles.css                       # Page styles
 │   ├── src/                             # Front-end modules
 │   ├── server/                          # Python API service
-│   ├── tools/                           # Data processing, export, and test tools
+│   ├── tools/                           # Data processing, export, and test tools (run_tests.py runs all tests)
 │   ├── config/                          # Algorithm adapter configurations
+│   ├── docs/                            # Feature guides (e.g. PLY quick load)
 │   ├── scenes/                          # Example scenes
 │   └── viewers/                         # Result viewers
 ├── web照片/                              # UI screenshots used by the README
@@ -145,7 +147,7 @@ source /path/to/miniconda3/etc/profile.d/conda.sh
 ### 1. Install the Web Service Dependencies
 
 ```bash
-python3.10 -m pip install flask paramiko numpy
+python3.10 -m pip install paramiko numpy
 ```
 
 ### 2. Start the API and Static Services
@@ -160,7 +162,22 @@ python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 http://127.0.0.1:8080/web/
 ```
 
-### 4. First-Run Workflow
+### 4. Access Token (enabled by default since v0.2)
+
+The server generates an access token on first start, stores it in `web/config/server.token` (0600 permissions), and prints it to the console. Opening the page above picks up the token automatically; CLI calls must send it as a header:
+
+```bash
+curl -H "X-Auth-Token: <token>" http://127.0.0.1:8080/api/health
+```
+
+Related options and configuration:
+
+- `--token <value>`: set an explicit token; `--no-auth`: disable token checks (not recommended).
+- `--allowed-host 192.168.1.10,myhost.local`: allow access via other hostnames (e.g. from the LAN). By default only 127.0.0.1, localhost, and the bound address are accepted.
+- Cross-origin requests are rejected (no more `Access-Control-Allow-Origin: *`), and static files are served from the `web/` subdirectory only.
+- `web/config/security.json` (optional): `{"allow_command_override": false, "extra_allowed_roots": ["/path/to/dir"]}` controls the `command_override` switch and extra directories allowed for result file reading.
+
+### 5. First-Run Workflow
 
 1. In `Data`, choose `New Image Upload` to upload images, or select existing remote data.
 2. In the remote configuration area, fill in Host, Port, Username, Password, Repo Path, Workspace Root, and Output Root.
@@ -198,8 +215,11 @@ No retraining needed: pick `Browser` or `Quick Load PLY` on the web page to load
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/load-ply \
-  -F "ply_file=@scene.ply"
+  -H "X-Auth-Token: <token>" -H "Content-Type: application/json" \
+  -d '{"ply_path": "/absolute/path/scene.ply"}'
 ```
+
+The endpoint only accepts paths inside the project directory (or directories listed in `extra_allowed_roots` in `web/config/security.json`).
 
 ### View Job Logs and Metrics
 
@@ -241,6 +261,23 @@ Check whether the PLY finished downloading, whether its file size looks sane, an
 - Keep dataset paths free of spaces to simplify remote commands and log inspection.
 - Do not submit too many jobs at once to the same GPU server; VRAM contention degrades all of them.
 - Back up important results separately from `web/generated/runs/` or the remote output directory.
+
+## Development & Testing
+
+The hand-written test suite covers remote execution, download resumption, flow data, job cleanup, and PLY loading:
+
+```bash
+python3 web/tools/run_tests.py            # run all test modules
+python3 web/tools/run_tests.py detached   # run a single module by keyword
+```
+
+Every push touching `web/` runs the same suite plus frontend syntax checks on GitHub Actions (`.github/workflows/tests.yml`).
+
+### Server module layout
+
+- `web/server/api_server.py` — HTTP routes, job orchestration, result discovery.
+- `web/server/web_security.py` — access token, same-origin enforcement, allowed result roots, JSON/error response builders.
+- `web/server/remote_executor.py` — SSH/SFTP execution, remote script generation, tmux detached runs, result download.
 
 ## License
 

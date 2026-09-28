@@ -2,6 +2,32 @@ function withApiBase(baseUrl, path) {
   return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).toString();
 }
 
+function apiToken() {
+  // Injected by the server into index.html (window.__WEBSCAN_API_TOKEN__).
+  return (typeof window !== "undefined" && String(window.__WEBSCAN_API_TOKEN__ || "")) || "";
+}
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const token = apiToken();
+  if (token) headers.set("X-Auth-Token", token);
+  const timeoutMs = Number(options.timeoutMs || 30000);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, headers, signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw new ApiRequestError(`Request timed out after ${Math.round(timeoutMs / 1000)}s`, {
+        code: "WGSC-CLIENT-TIMEOUT",
+      });
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export class ApiRequestError extends Error {
   constructor(message, payload = {}, status = 0, statusText = "") {
     super(message);
@@ -40,17 +66,17 @@ async function parseJson(response) {
 }
 
 export async function fetchHealth(apiBaseUrl) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/health"));
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/health"));
   return parseJson(response);
 }
 
 export async function fetchAlgorithms(apiBaseUrl) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/algorithms"));
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/algorithms"));
   return parseJson(response);
 }
 
 export async function fetchEnvironmentCheck(apiBaseUrl, family = "") {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/environment-check"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/environment-check"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -61,7 +87,7 @@ export async function fetchEnvironmentCheck(apiBaseUrl, family = "") {
 }
 
 export async function updateAdapter(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/adapters/update"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/adapters/update"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -72,7 +98,7 @@ export async function updateAdapter(apiBaseUrl, payload) {
 }
 
 export async function validateAdapter(apiBaseUrl, family) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/adapters/validate"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/adapters/validate"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -83,18 +109,19 @@ export async function validateAdapter(apiBaseUrl, family) {
 }
 
 export async function exportScenePackage(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/export-scene"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/export-scene"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+    timeoutMs: 300000,
   });
   return parseJson(response);
 }
 
 export async function submitAlgorithmJob(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/run-algorithm"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/run-algorithm"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -105,7 +132,7 @@ export async function submitAlgorithmJob(apiBaseUrl, payload) {
 }
 
 export async function runRemoteAlgorithm(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/run-remote-algorithm"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/run-remote-algorithm"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -116,7 +143,7 @@ export async function runRemoteAlgorithm(apiBaseUrl, payload) {
 }
 
 export async function previewRemoteAlgorithm(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/run-remote-algorithm/preview"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/run-remote-algorithm/preview"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -127,7 +154,7 @@ export async function previewRemoteAlgorithm(apiBaseUrl, payload) {
 }
 
 export async function remoteCheck(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/remote-check"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/remote-check"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -138,7 +165,7 @@ export async function remoteCheck(apiBaseUrl, payload) {
 }
 
 export async function cancelJob(apiBaseUrl, jobId, remote = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/cancel`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/cancel`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -149,7 +176,7 @@ export async function cancelJob(apiBaseUrl, jobId, remote = {}) {
 }
 
 export async function reattachRemoteJob(apiBaseUrl, jobId, remote = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/reattach`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/reattach`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -160,7 +187,7 @@ export async function reattachRemoteJob(apiBaseUrl, jobId, remote = {}) {
 }
 
 export async function checkJobResultDownload(apiBaseUrl, jobId, remote = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/results/check`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/results/check`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -171,29 +198,31 @@ export async function checkJobResultDownload(apiBaseUrl, jobId, remote = {}) {
 }
 
 export async function downloadJobResult(apiBaseUrl, jobId, remote = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/results/download`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/results/download`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ remote }),
+    timeoutMs: 300000,
   });
   return parseJson(response);
 }
 
 export async function redownloadJobResult(apiBaseUrl, jobId, remote = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/redownload-result`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/redownload-result`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ remote }),
+    timeoutMs: 300000,
   });
   return parseJson(response);
 }
 
 export async function repairJobMetrics(apiBaseUrl, jobId, remote = {}, options = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/repair-metrics`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/repair-metrics`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -204,7 +233,7 @@ export async function repairJobMetrics(apiBaseUrl, jobId, remote = {}, options =
 }
 
 export async function resetFlow(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/flow/reset"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/flow/reset"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -220,12 +249,12 @@ export async function fetchFlowData(apiBaseUrl, options = {}) {
     capture_id: options.captureId || "",
     family: options.family || "",
   });
-  const response = await fetch(withApiBase(apiBaseUrl, `api/flow/data?${params.toString()}`));
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/flow/data?${params.toString()}`));
   return parseJson(response);
 }
 
 export async function deleteFlowData(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/flow/data/delete"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/flow/data/delete"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -236,7 +265,7 @@ export async function deleteFlowData(apiBaseUrl, payload) {
 }
 
 export async function clearJobs(apiBaseUrl, payload = {}) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/jobs/clear"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/jobs/clear"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -247,7 +276,7 @@ export async function clearJobs(apiBaseUrl, payload = {}) {
 }
 
 export async function deleteJob(apiBaseUrl, jobId) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/delete`), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/delete`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -258,7 +287,7 @@ export async function deleteJob(apiBaseUrl, jobId) {
 }
 
 export async function fetchJobs(apiBaseUrl) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/jobs"));
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/jobs"));
   return parseJson(response);
 }
 
@@ -269,12 +298,12 @@ export async function fetchDiscoveredResults(apiBaseUrl, options = {}) {
     limit: String(Number.isFinite(limit) && limit > 0 ? limit : 30),
     max_scan_dirs: String(Number.isFinite(maxScanDirs) && maxScanDirs > 0 ? maxScanDirs : 1800),
   });
-  const response = await fetch(withApiBase(apiBaseUrl, `api/results/discover?${params.toString()}`));
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/results/discover?${params.toString()}`));
   return parseJson(response);
 }
 
 export async function fetchJob(apiBaseUrl, jobId) {
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}`));
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}`));
   return parseJson(response);
 }
 
@@ -287,7 +316,7 @@ export async function fetchJobLogs(apiBaseUrl, jobId, options = {}) {
     page_size: String(Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 20),
     tail_lines: String(Number.isFinite(tailLines) && tailLines > 0 ? tailLines : 120),
   });
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs?${params.toString()}`));
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs?${params.toString()}`));
   return parseJson(response);
 }
 
@@ -295,25 +324,31 @@ export async function fetchJobLogDelta(apiBaseUrl, jobId, cursor = 0) {
   const params = new URLSearchParams({
     cursor: String(Math.max(0, Number(cursor) || 0)),
   });
-  const response = await fetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs?${params.toString()}`));
+  const response = await apiFetch(withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs?${params.toString()}`));
   return parseJson(response);
 }
 
 export function buildJobLogDownloadUrl(apiBaseUrl, jobId) {
-  return withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs/download`);
+  const url = new URL(withApiBase(apiBaseUrl, `api/jobs/${jobId}/logs/download`));
+  const token = apiToken();
+  if (token) url.searchParams.set("access_token", token);
+  return url.toString();
 }
 
 export function buildJobMetricsCsvUrl(apiBaseUrl, jobId) {
-  return withApiBase(apiBaseUrl, `api/jobs/${jobId}/metrics.csv`);
+  const url = new URL(withApiBase(apiBaseUrl, `api/jobs/${jobId}/metrics.csv`));
+  const token = apiToken();
+  if (token) url.searchParams.set("access_token", token);
+  return url.toString();
 }
 
 export async function exportAnalysisCsv(apiBaseUrl, jobIds = []) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/jobs/analysis/export"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/jobs/analysis/export"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ job_ids: jobIds }),
+    body: JSON.stringify({ job_ids: jobIds }), timeoutMs: 300000,
   });
   if (!response.ok) {
     let payload = {};
@@ -333,7 +368,7 @@ export async function exportAnalysisCsv(apiBaseUrl, jobIds = []) {
 }
 
 export async function streamFrame(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/stream-frame"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/stream-frame"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -344,7 +379,7 @@ export async function streamFrame(apiBaseUrl, payload) {
 }
 
 export async function materializeSession(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/materialize-session"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/materialize-session"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -355,7 +390,7 @@ export async function materializeSession(apiBaseUrl, payload) {
 }
 
 export async function prepareColmapWorkspace(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/prepare-colmap-workspace"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/prepare-colmap-workspace"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -366,7 +401,7 @@ export async function prepareColmapWorkspace(apiBaseUrl, payload) {
 }
 
 export async function runCapturePipeline(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/run-capture-pipeline"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/run-capture-pipeline"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -377,7 +412,7 @@ export async function runCapturePipeline(apiBaseUrl, payload) {
 }
 
 export async function loadPlyFile(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/load-ply"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/load-ply"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -388,7 +423,7 @@ export async function loadPlyFile(apiBaseUrl, payload) {
 }
 
 export async function loadResultPath(apiBaseUrl, payload) {
-  const response = await fetch(withApiBase(apiBaseUrl, "api/load-result"), {
+  const response = await apiFetch(withApiBase(apiBaseUrl, "api/load-result"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

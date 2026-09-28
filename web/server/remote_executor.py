@@ -75,6 +75,12 @@ ALGORITHM_EVAL_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
     "cli_supports_eval": False,
     "reason": "CompGS uses its own Train/Test config workflow rather than a train.py --eval flag",
   },
+  "fcgs": {
+    "needs_eval_for_metrics": False,
+    "train_eval_arg": "",
+    "cli_supports_eval": False,
+    "reason": "FCGS trains through the CompGS pipeline wrapper (run_fcgs_compgs_pipeline.py), not a train.py --eval flag",
+  },
 }
 
 
@@ -143,6 +149,105 @@ def _load_paramiko():
   return paramiko
 
 
+WEB_CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+SSH_KNOWN_HOSTS_FILE = WEB_CONFIG_DIR / "ssh_known_hosts.json"
+_KNOWN_HOSTS_LOCK = threading.Lock()
+
+# Only conda/venv activation commands are accepted for remote.activate_cmd.
+# "source <path>" and "conda activate <env>" may be chained with "&&"; any
+# other shell construct (command substitution, pipes, redirection, ...) is
+# rejected so a client-provided string can never widen into arbitrary shell.
+_ACTIVATE_CMD_PATTERN = re.compile(
+  r"^(?:source\s+[\w./:~-]+|conda\s+activate\s+[\w.-]+)"
+  r"(?:\s*&&\s*(?:source\s+[\w./:~-]+|conda\s+activate\s+[\w.-]+))*$"
+)
+
+
+def _load_ssh_known_hosts() -> Dict[str, Any]:
+  try:
+    data = json.loads(SSH_KNOWN_HOSTS_FILE.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+  except Exception:
+    return {}
+
+
+def _save_ssh_known_hosts(data: Dict[str, Any]) -> None:
+  try:
+    SSH_KNOWN_HOSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SSH_KNOWN_HOSTS_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+      os.chmod(SSH_KNOWN_HOSTS_FILE, 0o600)
+    except OSError:
+      pass
+  except Exception as exc:
+    raise RemoteExecutionError(
+      f"Failed to save SSH known-hosts file: {SSH_KNOWN_HOSTS_FILE}: {exc}",
+      code_hint="WGSC-STEP4-SSH-HOSTKEY-002",
+      stage="connect",
+    ) from exc
+
+
+def _host_key_policy(paramiko, host: str, port: int):
+  """Trust-on-first-use host key policy.
+
+  The first connection stores the host key fingerprint in ssh_known_hosts.json;
+  later connections reject any key whose fingerprint changed (possible MITM).
+  Test doubles may ship a paramiko stub without policy classes; fall back to
+  AutoAddPolicy there.
+  """
+  policy_base = getattr(paramiko, "MissingHostKeyPolicy", None)
+  if policy_base is None:
+    return paramiko.AutoAddPolicy()
+
+  class _TofuHostKeyPolicy(policy_base):
+    def missing_host_key(self, client, hostname, key):
+      entry_name = f"{hostname}:{port}"
+      fingerprint = key.get_fingerprint().hex()
+      with _KNOWN_HOSTS_LOCK:
+        store = _load_ssh_known_hosts()
+        entry = store.get(entry_name)
+        if entry is not None:
+          if entry.get("type") != key.get_name() or entry.get("fingerprint") != fingerprint:
+            raise RemoteExecutionError(
+              f"SSH host key for {entry_name} does not match the saved fingerprint "
+              f"(expected {entry.get('fingerprint')}, got {fingerprint}). "
+              f"If the server key legitimately changed, delete the entry in "
+              f"{SSH_KNOWN_HOSTS_FILE} and retry.",
+              code_hint="WGSC-STEP4-SSH-HOSTKEY-001",
+              stage="connect",
+            )
+        else:
+          store[entry_name] = {
+            "type": key.get_name(),
+            "fingerprint": fingerprint,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+          }
+          _save_ssh_known_hosts(store)
+      client.get_host_keys().add(hostname, key.get_name(), key)
+
+  return _TofuHostKeyPolicy()
+
+
+def _new_ssh_client(validated: Dict[str, Any]):
+  """Create an SSHClient with the trust-on-first-use host key policy applied."""
+  paramiko = _load_paramiko()
+  client = paramiko.SSHClient()
+  client.set_missing_host_key_policy(_host_key_policy(paramiko, validated["host"], validated["port"]))
+  return client
+
+
+def _close_ssh_resources(client, sftp=None) -> None:
+  if sftp is not None:
+    try:
+      sftp.close()
+    except Exception:
+      pass
+  try:
+    client.close()
+  except Exception:
+    pass
+
+
 def _normalize_remote_path(path_value: str) -> str:
   raw = str(path_value or "").strip().replace("\\", "/")
   if not raw:
@@ -179,6 +284,14 @@ def validate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
   remote_python = str(config.get("python", "python3")).strip() or "python3"
   remote_activate_cmd = str(config.get("activate_cmd", "")).strip()
+  if remote_activate_cmd and not _ACTIVATE_CMD_PATTERN.match(remote_activate_cmd):
+    raise RemoteExecutionError(
+      "remote.activate_cmd must be a plain conda/venv activation command, e.g. "
+      "'source /root/miniconda3/etc/profile.d/conda.sh && conda activate myenv' or "
+      "'conda activate myenv'. Shell metacharacters besides '&&' are not allowed.",
+      code_hint="WGSC-STEP4-CONFIG-001",
+      stage="config",
+    )
 
   return {
     "host": host,
@@ -402,9 +515,7 @@ def remote_preflight_check(
 ) -> Dict[str, Any]:
   validated = validate_remote_config(remote_config)
   paramiko = _load_paramiko()
-
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   checks: list[Dict[str, Any]] = []
 
@@ -546,15 +657,7 @@ def remote_preflight_check(
       ),
     }
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def sanitize_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -1256,9 +1359,7 @@ def check_remote_output_download(
   expected_remote_output_dir: str = "",
 ) -> Dict[str, Any]:
   validated = validate_remote_config(remote_config)
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   try:
     client.connect(
@@ -1282,15 +1383,7 @@ def check_remote_output_download(
     plan = _build_remote_download_plan(sftp, remote_output_dir, Path(local_output_dir))
     return {**_public_download_plan(plan), "remote_marker": marker}
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def download_remote_output_directory(
@@ -1305,9 +1398,7 @@ def download_remote_output_directory(
   progress_callback: Callable[[Dict[str, Any]], None] | None = None,
 ) -> Dict[str, Any]:
   validated = validate_remote_config(remote_config)
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   try:
     client.connect(
@@ -1336,15 +1427,7 @@ def download_remote_output_directory(
     )
     return {**result, "remote_marker": marker}
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def _remote_job_paths(remote_output_dir: str) -> Dict[str, str]:
@@ -2795,9 +2878,7 @@ def start_remote_algorithm_detached(
     family,
   )
 
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
 
   try:
@@ -2942,15 +3023,7 @@ def start_remote_algorithm_detached(
       "download": {"files": 0, "bytes": 0, "pending": True},
     }
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def poll_remote_detached_job(
@@ -2967,9 +3040,7 @@ def poll_remote_detached_job(
   expected_family: str = "",
 ) -> Dict[str, Any]:
   validated = validate_remote_config(remote_config)
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   try:
     client.connect(
@@ -3189,15 +3260,7 @@ def poll_remote_detached_job(
       "download": download_info,
     }
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def _build_remote_cancel_script(remote_job_paths: Dict[str, str], resolved_pid: str = "", tmux_session: str = "") -> str:
@@ -3233,9 +3296,7 @@ def cancel_remote_detached_job(
     "status_file": str(PurePosixPath(remote_job_dir) / "status.json"),
     "runtime_log": str(PurePosixPath(remote_job_dir) / "runtime.log"),
   }
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   try:
     client.connect(
@@ -3265,15 +3326,7 @@ def cancel_remote_detached_job(
     _write_remote_text(sftp, remote_job_paths["status_file"], json.dumps(status_payload, ensure_ascii=False, indent=2))
     return {"ok": True, "remote_pid": resolved_pid, "remote_tmux_session": tmux_session, "status": "canceled"}
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)
 
 
 def _build_remote_repair_metrics_script(
@@ -3455,9 +3508,7 @@ def repair_remote_job_metrics(
     remote_command=remote_command,
   )
 
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client = _new_ssh_client(validated)
   sftp = None
   try:
     client.connect(
@@ -3492,268 +3543,4 @@ def repair_remote_job_metrics(
       "updated_at": status_payload.get("updated_at", ""),
     }
   finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
-
-
-def run_remote_algorithm(
-  *,
-  remote_config: Dict[str, Any],
-  local_workspace_dir: str,
-  local_output_dir: str,
-  session_id: str,
-  family: str,
-  job_id: str,
-  command_template: str,
-  checkpoint_path: str,
-  input_path: str,
-  source_path: str,
-  auto_colmap: bool = True,
-  dataset_name: str = "",
-  remote_dataset_id: str = "",
-  remote_dataset_path: str = "",
-  use_existing_remote_dataset: bool = False,
-  training_args: Dict[str, Any] | None = None,
-  command_override: str = "",
-  log_callback: Callable[[str, str], None] | None = None,
-  stage_callback: Callable[[str], None] | None = None,
-  cancel_checker: Callable[[], bool] | None = None,
-) -> Dict[str, Any]:
-  validated = validate_remote_config(remote_config)
-  auto_colmap = bool(auto_colmap) and not bool(use_existing_remote_dataset)
-
-  workspace_dir: Path | None = None
-  if not use_existing_remote_dataset:
-    workspace_dir = Path(local_workspace_dir).expanduser().resolve()
-    if not workspace_dir.exists() or not workspace_dir.is_dir():
-      raise RemoteExecutionError(f"Local workspace directory not found: {workspace_dir}")
-
-  output_dir = Path(local_output_dir).expanduser().resolve()
-  output_dir.mkdir(parents=True, exist_ok=True)
-
-  remote_paths = build_remote_paths(
-    workspace_root=validated["workspace_root"],
-    output_root=validated["output_root"],
-    session_id=session_id,
-    family=family,
-    job_id=job_id,
-  )
-
-  resolved_dataset_id = str(remote_dataset_id or "").strip()
-  resolved_dataset_name = str(dataset_name or "").strip() or resolved_dataset_id
-
-  if use_existing_remote_dataset:
-    selected_path = str(remote_dataset_path or "").strip()
-    if selected_path:
-      remote_workspace_for_command = str(PurePosixPath(selected_path))
-      if not resolved_dataset_id:
-        resolved_dataset_id = PurePosixPath(remote_workspace_for_command).parent.name
-    elif resolved_dataset_id:
-      remote_workspace_for_command = str(
-        PurePosixPath(validated["workspace_root"]) / "datasets" / family / resolved_dataset_id / "workspace"
-      )
-    else:
-      raise RemoteExecutionError(
-        "No remote dataset was selected. Choose an existing dataset before running this operation.",
-        code_hint="WGSC-STEP5-DATASET-SELECT-001",
-        stage="dataset",
-      )
-  else:
-    resolved_dataset_id = resolved_dataset_id or _normalize_dataset_id(resolved_dataset_name, job_id)
-    resolved_dataset_name = resolved_dataset_name or resolved_dataset_id
-    remote_workspace_for_command = str(
-      PurePosixPath(validated["workspace_root"]) / "datasets" / family / resolved_dataset_id / "workspace"
-    )
-
-  format_args = {
-    "input_path": input_path,
-    "output_dir": remote_paths["output_dir"],
-    "workspace": remote_workspace_for_command,
-    "checkpoint_path": checkpoint_path,
-    "repo_path": validated["repo_path"],
-    "source": source_path or remote_workspace_for_command,
-    **(training_args or {}),
-  }
-  if str(command_override or "").strip():
-    remote_command = str(command_override).strip()
-  else:
-    remote_command = command_template.format(**format_args)
-    try:
-      remote_command = sanitize_formatted_command(command_template, remote_command, format_args)
-    except Exception:
-      pass
-
-  if remote_command.lstrip().startswith("python "):
-    remote_command = f"{validated['python']}{remote_command.lstrip()[len('python') :]}"
-
-  paramiko = _load_paramiko()
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-  sftp = None
-
-  try:
-    def assert_not_cancelled() -> None:
-      if cancel_checker and cancel_checker():
-        raise RemoteExecutionError(
-          "Remote job was canceled by user.",
-          code_hint="WGSC-JOB-CANCELED",
-          stage="canceled",
-        )
-
-    if stage_callback:
-      stage_callback("connecting")
-    client.connect(
-      hostname=validated["host"],
-      port=validated["port"],
-      username=validated["username"],
-      password=validated["password"],
-      timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
-    )
-
-    sftp = client.open_sftp()
-    assert_not_cancelled()
-
-    if use_existing_remote_dataset:
-      if stage_callback:
-        stage_callback("using_existing_dataset")
-      if not _remote_directory_exists(client, remote_workspace_for_command):
-        raise RemoteExecutionError(
-          f"Selected remote dataset workspace not found: {remote_workspace_for_command}",
-          code_hint="WGSC-STEP5-DATASET-SELECT-001",
-          stage="dataset",
-        )
-      upload_info = {
-        "files": 0,
-        "bytes": 0,
-        "skipped": True,
-      }
-    else:
-      if stage_callback:
-        stage_callback("uploading_workspace")
-      upload_info = _upload_directory(sftp, workspace_dir, remote_paths["workspace_dir"])
-      assert_not_cancelled()
-
-      if stage_callback:
-        stage_callback("saving_named_dataset")
-      remote_dataset_dir = str(PurePosixPath(remote_workspace_for_command).parent)
-      persist_script = (
-        f"mkdir -p {_quote(remote_dataset_dir)}"
-        f" && rm -rf {_quote(remote_workspace_for_command)}"
-        f" && cp -a {_quote(remote_paths['workspace_dir'])} {_quote(remote_workspace_for_command)}"
-      )
-      persist_rc = _run_remote_command_cancellable(
-        client,
-        f"bash -lc {_quote(persist_script)}",
-        log_callback,
-        cancel_checker,
-      )
-      if persist_rc != 0:
-        raise RemoteExecutionError(
-          "Failed to persist named remote dataset workspace.",
-          code_hint="WGSC-STEP5-DATASET-NAME-001",
-          stage="dataset",
-        )
-
-    if auto_colmap:
-      has_sparse = _remote_has_sparse_workspace(client, remote_workspace_for_command)
-      if has_sparse:
-        if log_callback:
-          log_callback("stdout", f"[AutoCOLMAP] Skip: sparse workspace already exists at {remote_workspace_for_command}\n")
-      else:
-        if stage_callback:
-          stage_callback("executing_remote_colmap")
-        if not _check_remote_colmap_available(client):
-          raise RemoteExecutionError(
-            "Remote colmap is not available. Install colmap or configure PATH on remote host.",
-            code_hint="WGSC-STEP5-COLMAP-TOOL-001",
-            stage="colmap",
-          )
-        colmap_script = _build_remote_colmap_script(remote_workspace_for_command)
-        colmap_rc = _run_remote_command_cancellable(
-          client,
-          f"bash -lc {_quote(colmap_script)}",
-          log_callback,
-          cancel_checker,
-        )
-        if colmap_rc != 0:
-          raise RemoteExecutionError(
-            "Remote COLMAP preprocessing failed.",
-            code_hint="WGSC-STEP5-COLMAP-REMOTE-001",
-            stage="colmap",
-          )
-        if stage_callback:
-          stage_callback("remote_colmap_completed")
-    elif use_existing_remote_dataset and log_callback:
-      log_callback("stdout", f"[Dataset] Reusing existing remote dataset: {resolved_dataset_id or remote_workspace_for_command}\n")
-
-    assert_not_cancelled()
-    steps = [
-      f"mkdir -p {_quote(remote_paths['output_dir'])}",
-      f"cd {_quote(validated['repo_path'])}",
-    ]
-    if validated["activate_cmd"]:
-      steps.append("[ -f ~/.bash_profile ] && source ~/.bash_profile 2>/dev/null || true")
-      steps.append("[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null || true")
-      steps.append(
-        '{ if command -v conda >/dev/null 2>&1; then '
-        'eval "$(conda shell.bash hook)" || true; '
-        'elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then '
-        'source "$HOME/miniconda3/etc/profile.d/conda.sh" || true; '
-        'elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then '
-        'source "$HOME/anaconda3/etc/profile.d/conda.sh" || true; '
-        'elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then '
-        'source "/opt/conda/etc/profile.d/conda.sh" || true; '
-        'fi; }'
-      )
-      steps.append(validated["activate_cmd"])
-    steps.append(remote_command)
-    remote_script = " && ".join(steps)
-    shell_command = f"bash -lc {_quote(remote_script)}"
-
-    if stage_callback:
-      stage_callback("executing_remote_command")
-    return_code = _run_remote_command_cancellable(client, shell_command, log_callback, cancel_checker)
-    if cancel_checker and cancel_checker():
-      raise RemoteExecutionError(
-        "Remote job was canceled by user.",
-        code_hint="WGSC-JOB-CANCELED",
-        stage="canceled",
-      )
-
-    if stage_callback:
-      stage_callback("downloading_output")
-    download_info = _download_directory(sftp, remote_paths["output_dir"], output_dir)
-
-    if stage_callback:
-      stage_callback("completed" if return_code == 0 else "failed")
-
-    return {
-      "return_code": return_code,
-      "remote_workspace_dir": remote_workspace_for_command,
-      "remote_output_dir": remote_paths["output_dir"],
-      "remote_dataset_id": resolved_dataset_id,
-      "remote_dataset_name": resolved_dataset_name,
-      "remote_dataset_workspace": remote_workspace_for_command,
-      "remote_command": remote_command,
-      "upload": upload_info,
-      "download": download_info,
-    }
-  finally:
-    try:
-      if sftp is not None:
-        sftp.close()
-    except Exception:
-      pass
-    try:
-      client.close()
-    except Exception:
-      pass
+    _close_ssh_resources(client, sftp)

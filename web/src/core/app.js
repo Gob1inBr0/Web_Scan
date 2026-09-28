@@ -182,11 +182,43 @@ function canonicalizePageUrl() {
   window.history.replaceState({}, "", url);
 }
 
+function storedRemotePassword() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(REMOTE_KEY) || "{}");
+    return String(saved.password || "");
+  } catch {
+    return "";
+  }
+}
+
+function migrateRemotePasswordToSession() {
+  // v0.2: SSH passwords must never persist in localStorage (survives browser restarts).
+  // Move any legacy copy into sessionStorage (cleared when the browser closes).
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      const saved = JSON.parse(storage.getItem(REMOTE_KEY) || "{}");
+      if (typeof saved.password === "string" && saved.password) {
+        sessionStorage.setItem(REMOTE_KEY, JSON.stringify({ ...saved, password: saved.password }));
+      }
+      if ("password" in saved) {
+        delete saved.password;
+        storage.setItem(REMOTE_KEY, JSON.stringify(saved));
+      }
+    } catch {
+      /* ignore malformed storage */
+    }
+  }
+}
+
 function loadState() {
   const base = defaultState();
   try {
+    migrateRemotePasswordToSession();
     const stored = JSON.parse(localStorage.getItem(STATE_KEY) || "{}");
     const remoteStored = JSON.parse(localStorage.getItem(REMOTE_KEY) || "{}");
+    if (stored.remoteConfig && typeof stored.remoteConfig === "object") {
+      delete stored.remoteConfig.password;
+    }
     return {
       ...base,
       ...stored,
@@ -195,6 +227,7 @@ function loadState() {
         ...DEFAULT_REMOTE,
         ...stored.remoteConfig,
         ...remoteStored,
+        password: storedRemotePassword(),
       },
       training: {
         ...DEFAULT_TRAINING,
@@ -221,12 +254,18 @@ function persistState() {
     selectedFiles: [],
     remoteReport: state.remoteReport,
     lastPreview: state.lastPreview,
+    // The password lives in sessionStorage only; never write it into localStorage.
+    remoteConfig: { ...state.remoteConfig, password: "" },
   };
   localStorage.setItem(STATE_KEY, JSON.stringify(payload));
 }
 
 function setPage(page, options = {}) {
   const resolvedPage = PAGE_ALIASES[page] || page;
+  if (resolvedPage !== state.activePage && state.activePage === "data") {
+    // Leaving the data page must stop the camera and the auto stream upload timer.
+    stopCamera({ silent: true });
+  }
   state.activePage = resolvedPage;
   persistState();
   if (!options.silent) {
@@ -2527,6 +2566,11 @@ function newCapture() {
 function resetClientStateForUploadTraining() {
   localStorage.removeItem(STATE_KEY);
   localStorage.removeItem(REMOTE_KEY);
+  try {
+    sessionStorage.removeItem(REMOTE_KEY);
+  } catch {
+    /* ignore */
+  }
   const fresh = defaultState();
   Object.assign(state, fresh, {
     activePage: "data",
@@ -2664,7 +2708,7 @@ async function startCamera() {
   afterRender();
 }
 
-function stopCamera() {
+function stopCamera(options = {}) {
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = null;
@@ -2673,8 +2717,10 @@ function stopCamera() {
     window.clearInterval(streamTimer);
     streamTimer = null;
   }
-  render();
-  afterRender();
+  if (!options.silent) {
+    render();
+    afterRender();
+  }
 }
 
 async function toggleStream() {
@@ -2812,13 +2858,20 @@ function useDataset(datasetId) {
 }
 
 function saveRemoteConfig() {
-  localStorage.setItem(REMOTE_KEY, JSON.stringify(state.remoteConfig));
-  showToast("Remote config saved in this browser.");
+  const { password, ...nonSecret } = state.remoteConfig;
+  localStorage.setItem(REMOTE_KEY, JSON.stringify(nonSecret));
+  try {
+    sessionStorage.setItem(REMOTE_KEY, JSON.stringify({ password: password || "" }));
+  } catch {
+    /* sessionStorage unavailable (e.g. some private modes); password stays in memory only */
+  }
+  showToast("Remote config saved. The password is kept for this browser session only.");
 }
 
 function restoreRemoteConfig() {
   const saved = JSON.parse(localStorage.getItem(REMOTE_KEY) || "{}");
-  state.remoteConfig = { ...DEFAULT_REMOTE, ...saved };
+  const sessionSaved = JSON.parse(sessionStorage.getItem(REMOTE_KEY) || "{}");
+  state.remoteConfig = { ...DEFAULT_REMOTE, ...saved, ...sessionSaved };
   invalidateRemoteState();
   persistState();
   render();
@@ -2935,8 +2988,21 @@ function selectJob(jobId) {
   loadLog(true).catch(() => {});
 }
 
+let loadLogInFlight = false;
+
 async function loadLog(reset = false) {
   if (!state.selectedJobId) return;
+  // Two overlapping deltas would both read the same cursor and append the log twice.
+  if (loadLogInFlight) return;
+  loadLogInFlight = true;
+  try {
+    await appendLogDelta(reset);
+  } finally {
+    loadLogInFlight = false;
+  }
+}
+
+async function appendLogDelta(reset = false) {
   if (reset) {
     state.logCursor = 0;
     state.logText = "";
@@ -3429,7 +3495,11 @@ function openJobCleanupConfirmModal({ mode, statuses = [], job = null }) {
   });
 }
 
+let pollInFlight = false;
+
 async function poll() {
+  if (pollInFlight || busy) return;
+  pollInFlight = true;
   try {
     if (shouldPausePollingForResultViewer()) return;
     await refreshJobs();
@@ -3442,10 +3512,10 @@ async function poll() {
       const scrollY = window.scrollY;
       const workspaceFrame = document.querySelector('.workspace-frame');
       const frameScrollY = workspaceFrame ? workspaceFrame.scrollTop : 0;
-      
+
       render();
       afterRender();
-      
+
       window.scrollTo(0, scrollY);
       const newWorkspaceFrame = document.querySelector('.workspace-frame');
       if (newWorkspaceFrame && frameScrollY > 0) {
@@ -3454,6 +3524,8 @@ async function poll() {
     }
   } catch {
     // Keep the UI usable when the backend is temporarily offline.
+  } finally {
+    pollInFlight = false;
   }
 }
 
