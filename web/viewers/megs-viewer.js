@@ -1,3 +1,23 @@
+// Merged Gaussian splat viewer for both representations:
+//   - "sh": spherical-harmonics Gaussians (f_dc_*/f_rest_* properties)
+//   - "sg": spherical-Gaussian Gaussians (rgb_base_*/sg_dir_*/sg_rgb_* properties)
+// sh.html loads it with ?fmt=sh and sg.html with ?fmt=sg (script src query).
+//
+// PLY files are parsed incrementally in the worker: the page streams raw
+// chunks over as they download, the worker locates the header, allocates the
+// output buffers, and converts complete rows on the fly so the scene appears
+// before the download finishes. Only binary_little_endian PLY is supported.
+const FORMAT = (() => {
+    try {
+        const src = document.currentScript && document.currentScript.src;
+        if (src) {
+            const fmt = new URL(src).searchParams.get("fmt");
+            if (fmt) return fmt.toLowerCase() === "sg" ? "sg" : "sh";
+        }
+    } catch (err) { /* fall through to default */ }
+    return "sh";
+})();
+
 let cameras = [
     {
         id: 0,
@@ -57,7 +77,7 @@ let cameras = [
         ],
         rotation: [
             [0.9208648867765482, 0.0012010625395201253, 0.389880004297208],
-            [-0.06298204172269357, 0.987319521752825, 0.14571693239364383],
+            [-0.06298104172269357, 0.987319521752825, 0.14571693239364383],
             [-0.3847611242348369, -0.1587410451475895, 0.9092635249821667],
         ],
         fy: 1164.6601287484507,
@@ -85,12 +105,12 @@ let cameras = [
         width: 1959,
         height: 1090,
         position: [
-            3.6567309419223935, -0.16470990600750707, -1.3458085590422042,
+            3.6567309419223925, -0.16470990600750707, -1.3458085590422042,
         ],
         rotation: [
-            [0.2341293058324528, -0.02968330457755884, -0.9717522161434825],
+            [0.2341293058324528, -0.029683304577558845, -0.9717522161434825],
             [0.10270823606832301, 0.99469554638321, -0.005638106875665722],
-            [0.9667649592295676, -0.09848690996657204, 0.2359360976431732],
+            [0.9667649592295676, -0.0984869096675676, 0.2359360976431732],
         ],
         fy: 1164.6601287484507,
         fx: 1159.5880733038064,
@@ -147,7 +167,7 @@ let cameras = [
         position: [3.264984351114202, 0.078974937336732, 1.0117200284114904],
         rotation: [
             [-0.026919994628162257, -0.1565891128261527, -0.9872968974090509],
-            [0.08444552208239385, 0.983768234577625, -0.1583319754069128],
+            [0.08444552208239385, 0.983768234577625, -0.15833197540970964],
             [0.9960643893290491, -0.0876350978794554, -0.013259786205163005],
         ],
         fy: 1164.6601287484507,
@@ -184,15 +204,6 @@ function getViewMatrix(camera) {
     ].flat();
     return camToWorld;
 }
-// function translate4(a, x, y, z) {
-//     return [
-//         ...a.slice(0, 12),
-//         a[0] * x + a[4] * y + a[8] * z + a[12],
-//         a[1] * x + a[5] * y + a[9] * z + a[13],
-//         a[2] * x + a[6] * y + a[10] * z + a[14],
-//         a[3] * x + a[7] * y + a[11] * z + a[15],
-//     ];
-// }
 
 function multiply4(a, b) {
     return [
@@ -296,6 +307,7 @@ function translate4(a, x, y, z) {
 }
 
 function createWorker(self) {
+
     let buffer;
     let vertexCount = 0;
     let viewProj;
@@ -304,7 +316,7 @@ function createWorker(self) {
     // XYZ - Scale (Float32)
     // RGBA - colors (uint8)
     // IJKL - quaternion/rot (uint8)
-    const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
+    const rowLength = 3 * 4 + 3 * 4 + 4 + 4; // 32 bytes per vertex
     let lastProj = [];
     let depthIndex = new Uint32Array();
     let lastVertexCount = 0;
@@ -345,41 +357,74 @@ function createWorker(self) {
         return (floatToHalf(x) | (floatToHalf(y) << 16)) >>> 0;
     }
 
+    // ---- format-specific extra state (SH coefficient buffer / SG axis rows) ----
+    let shBuffer = null;
+    let sgRows = [];
+    let sgStarts = new Uint32Array(0);
+    let axisCounts = new Uint32Array(0);
+    let sgRowCursor = 0;
+
     function generateTexture() {
         if (!buffer) return;
-        const f_buffer = new Float32Array(buffer);
+        const floatCount = Math.floor(buffer.byteLength / 4);
+        if (floatCount <= 0) return;
+        const f_buffer = new Float32Array(buffer, 0, floatCount);
         const u_buffer = new Uint8Array(buffer);
 
-        var texwidth = 1024 * 2; // Set to your desired width
-        var texheight = Math.ceil((2 * vertexCount) / texwidth); // Set to your desired height
-        var texdata = new Uint32Array(texwidth * texheight * 4); // 4 components per pixel (RGBA)
+        var texwidth = 1024 * 2; // 2048 pixels wide
+        var texheight = Math.ceil((2 * vertexCount) / texwidth); // 2 pixels per vertex
+        var texdata = new Uint32Array(texwidth * texheight * 4);
         var texdata_c = new Uint8Array(texdata.buffer);
         var texdata_f = new Float32Array(texdata.buffer);
 
-        let texdata_sg = null, texwidth_sg = 1, texheight_sg = 2;
+        let texdata_extra = null, texwidth_extra = 1, texheight_extra = 1;
         let texdata_index = null, texwidth_index = 1, texheight_index = 1;
 
-        if (typeof sgStarts !== 'undefined' && sgStarts.length > 0) {
-            texwidth_sg = 2048;
-            texheight_sg = Math.ceil(sgRowCursor / texwidth_sg) * 2;
-            texdata_sg = new Float32Array(texwidth_sg * texheight_sg * 4);
+        if (FORMAT === "sh" && shBuffer) {
+            texwidth_extra = 8192;
+            const shRowLength = 48;
+            texheight_extra = Math.ceil((vertexCount * 12) / texwidth_extra);
+            texdata_extra = new Float32Array(texwidth_extra * texheight_extra * 4);
+
+            const sh_f_buffer = new Float32Array(shBuffer);
+
+            for (let i = 0; i < vertexCount; i++) {
+                for (let j = 0; j < 12; j++) {
+                    const texX = (i * 12 + j) % texwidth_extra;
+                    const texY = Math.floor((i * 12 + j) / texwidth_extra);
+                    const texIndex = (texY * texwidth_extra + texX) * 4;
+
+                    if (texIndex < texdata_extra.length) {
+                        texdata_extra[texIndex + 0] = sh_f_buffer[i * 48 + j * 4 + 0];
+                        texdata_extra[texIndex + 1] = sh_f_buffer[i * 48 + j * 4 + 1];
+                        texdata_extra[texIndex + 2] = sh_f_buffer[i * 48 + j * 4 + 2];
+                        texdata_extra[texIndex + 3] = sh_f_buffer[i * 48 + j * 4 + 3];
+                    }
+                }
+            }
+        }
+
+        if (FORMAT === "sg" && sgStarts.length > 0 && sgRowCursor > 0) {
+            texwidth_extra = 2048;
+            texheight_extra = Math.ceil(sgRowCursor / texwidth_extra) * 2;
+            texdata_extra = new Float32Array(texwidth_extra * texheight_extra * 4);
 
             for (let i = 0; i < sgRowCursor; i++) {
                 const row0 = sgRows[2 * i + 0];
                 const row1 = sgRows[2 * i + 1];
 
-                const texX = i % texwidth_sg;
-                const texY = Math.floor(i / texwidth_sg) * 2;
+                const texX = i % texwidth_extra;
+                const texY = Math.floor(i / texwidth_extra) * 2;
 
-                texdata_sg[(texY * texwidth_sg + texX) * 4 + 0] = row0[0];
-                texdata_sg[(texY * texwidth_sg + texX) * 4 + 1] = row0[1];
-                texdata_sg[(texY * texwidth_sg + texX) * 4 + 2] = row0[2];
-                texdata_sg[(texY * texwidth_sg + texX) * 4 + 3] = row0[3];
+                texdata_extra[(texY * texwidth_extra + texX) * 4 + 0] = row0[0];
+                texdata_extra[(texY * texwidth_extra + texX) * 4 + 1] = row0[1];
+                texdata_extra[(texY * texwidth_extra + texX) * 4 + 2] = row0[2];
+                texdata_extra[(texY * texwidth_extra + texX) * 4 + 3] = row0[3];
 
-                texdata_sg[((texY + 1) * texwidth_sg + texX) * 4 + 0] = row1[0];
-                texdata_sg[((texY + 1) * texwidth_sg + texX) * 4 + 1] = row1[1];
-                texdata_sg[((texY + 1) * texwidth_sg + texX) * 4 + 2] = row1[2];
-                texdata_sg[((texY + 1) * texwidth_sg + texX) * 4 + 3] = row1[3];
+                texdata_extra[((texY + 1) * texwidth_extra + texX) * 4 + 0] = row1[0];
+                texdata_extra[((texY + 1) * texwidth_extra + texX) * 4 + 1] = row1[1];
+                texdata_extra[((texY + 1) * texwidth_extra + texX) * 4 + 2] = row1[2];
+                texdata_extra[((texY + 1) * texwidth_extra + texX) * 4 + 3] = row1[3];
             }
 
             texwidth_index = 2048;
@@ -408,18 +453,20 @@ function createWorker(self) {
             texdata_f[8 * i + 1] = f_buffer[8 * i + 1];
             texdata_f[8 * i + 2] = f_buffer[8 * i + 2];
 
-            // r, g, b, a
+            // r, g, b, a (color data at offset 24-27 in buffer)
             texdata_c[4 * (8 * i + 7) + 0] = u_buffer[32 * i + 24 + 0];
             texdata_c[4 * (8 * i + 7) + 1] = u_buffer[32 * i + 24 + 1];
             texdata_c[4 * (8 * i + 7) + 2] = u_buffer[32 * i + 24 + 2];
             texdata_c[4 * (8 * i + 7) + 3] = u_buffer[32 * i + 24 + 3];
 
-            // quaternions
+            // Scale data at offset 12-23 in buffer (3 float32 values)
             let scale = [
-                f_buffer[8 * i + 3 + 0],
-                f_buffer[8 * i + 3 + 1],
-                f_buffer[8 * i + 3 + 2],
+                f_buffer[8 * i + 3],
+                f_buffer[8 * i + 4],
+                f_buffer[8 * i + 5],
             ];
+
+            // Rotation data at offset 28-31 in buffer (4 uint8 values)
             let rot = [
                 (u_buffer[32 * i + 28 + 0] - 128) / 128,
                 (u_buffer[32 * i + 28 + 1] - 128) / 128,
@@ -451,21 +498,28 @@ function createWorker(self) {
                 M[2] * M[2] + M[5] * M[5] + M[8] * M[8],
             ];
 
+            // Store covariance data in pixel 1
             texdata[8 * i + 4] = packHalf2x16(4 * sigma[0], 4 * sigma[1]);
             texdata[8 * i + 5] = packHalf2x16(4 * sigma[2], 4 * sigma[3]);
             texdata[8 * i + 6] = packHalf2x16(4 * sigma[4], 4 * sigma[5]);
         }
 
         self.postMessage({ texdata, texwidth, texheight }, [texdata.buffer]);
-        if (texdata_sg) {
-            self.postMessage({ texdata_sg, texwidth_sg, texheight_sg }, [texdata_sg.buffer]);
-            self.postMessage({ texdata_index, texwidth_index, texheight_index }, [texdata_index.buffer]);
+        if (texdata_extra) {
+            if (FORMAT === "sg") {
+                self.postMessage({ texdata_sg: texdata_extra, texwidth_sg: texwidth_extra, texheight_sg: texheight_extra }, [texdata_extra.buffer]);
+                self.postMessage({ texdata_index, texwidth_index, texheight_index }, [texdata_index.buffer]);
+            } else {
+                self.postMessage({ texdata_sh: texdata_extra, texwidth_sh: texwidth_extra, texheight_sh: texheight_extra }, [texdata_extra.buffer]);
+            }
         }
     }
 
     function runSort(viewProj) {
         if (!buffer) return;
-        const f_buffer = new Float32Array(buffer);
+        const floatCount = Math.floor(buffer.byteLength / 4);
+        if (floatCount <= 0) return;
+        const f_buffer = new Float32Array(buffer, 0, floatCount);
         if (lastVertexCount == vertexCount) {
             let dot =
                 lastProj[2] * viewProj[2] +
@@ -517,125 +571,273 @@ function createWorker(self) {
         ]);
     }
 
-    function processPlyBuffer(inputBuffer) {
-        const ubuf = new Uint8Array(inputBuffer);
-        const header = new TextDecoder().decode(ubuf.slice(0, 1024 * 10));
-        const header_end = "end_header\n";
-        const header_end_index = header.indexOf(header_end);
-        if (header_end_index < 0) throw new Error("Unable to read .ply file header");
+    // ---- PLY incremental ingest ----
+    // The page streams raw PLY bytes over as they download. The worker
+    // accumulates them until "end_header" is found, parses the element
+    // layout once, then converts every complete row immediately so the
+    // scene can be rendered while the download is still in flight.
+    let plyJob = null;
+    let plyPreHeader = new Uint8Array(0);
+    const PLY_TYPE_MAP = {
+        double: "getFloat64",
+        int: "getInt32",
+        uint: "getUint32",
+        float: "getFloat32",
+        short: "getInt16",
+        ushort: "getUint16",
+        uchar: "getUint8",
+    };
 
-        const TYPE_MAP = { double: "getFloat64", int: "getInt32", uint: "getUint32", float: "getFloat32", short: "getInt16", ushort: "getUint16", uchar: "getUint8" };
-
-        const lines = header.slice(0, header_end_index).split("\n");
+    function parsePlyLayout(headerText) {
+        const headerEnd = "end_header\n";
+        const endIdx = headerText.indexOf(headerEnd);
+        if (endIdx < 0) return { status: "incomplete" };
+        const fmtMatch = /format\s+(\S+)\s+1\.0/.exec(headerText);
+        if (!fmtMatch) return { status: "unsupported", reason: "Missing PLY format line" };
+        if (fmtMatch[1] !== "binary_little_endian") {
+            return { status: "unsupported", reason: `Unsupported PLY format: ${fmtMatch[1]} (only binary_little_endian)` };
+        }
+        const lines = headerText.slice(0, endIdx).split("\n");
         let elements = [];
         let current = null;
-        for (let ln of lines) {
+        for (const ln of lines) {
             if (ln.startsWith("element ")) {
                 const parts = ln.split(/\s+/);
-                const name = parts[1];
-                const count = parseInt(parts[2]);
-                current = { name, count, props: [], types: {}, offsets: {}, stride: 0 };
-                elements.push(current);
-            } else if (ln.startsWith("property ") && current) {
+                current = {
+                    name: parts[1],
+                    count: parseInt(parts[2]),
+                    props: [],
+                    types: {},
+                    offsets: {},
+                    stride: 0,
+                };
+                if (/^vertex(_\d+)?$/.test(current.name)) elements.push(current);
+            } else if (ln.startsWith("property ") && current && /^vertex(_\d+)?$/.test(current.name)) {
                 const [p, type, ...rest] = ln.split(/\s+/);
                 const name = rest.join(" ");
-                const arrayType = TYPE_MAP[type] || "getInt8";
+                const arrayType = PLY_TYPE_MAP[type] || "getInt8";
                 current.types[name] = arrayType;
                 current.offsets[name] = current.stride;
                 current.stride += parseInt(arrayType.replace(/[^\d]/g, "")) / 8;
                 current.props.push(name);
             }
         }
+        if (elements.length === 0) {
+            return { status: "unsupported", reason: "No vertex elements found in PLY" };
+        }
+        const total = elements.reduce((s, e) => s + e.count, 0);
+        if (!Number.isFinite(total) || total <= 0) {
+            return { status: "unsupported", reason: "PLY vertex element has no rows" };
+        }
+        return { status: "ok", total, elements, dataStart: endIdx + headerEnd.length };
+    }
 
-        elements = elements.filter(e => /^vertex(\_\d+)?$/.test(e.name));
-        if (elements.length === 0) throw new Error("No vertex elements found in PLY");
+    function plyAttr(elem, dv, base, name) {
+        const t = elem.types[name];
+        if (!t) return undefined;
+        return dv[t](base + elem.offsets[name], true);
+    }
 
-        let totalVertices = elements.reduce((s, e) => s + e.count, 0);
-        console.log("Vertex Count", totalVertices);
+    function plyConvertRow(elem, dv, base, outRow) {
+        const position = new Float32Array(buffer, outRow * rowLength, 3);
+        const scales = new Float32Array(buffer, outRow * rowLength + 12, 3);
+        const rgba = new Uint8ClampedArray(buffer, outRow * rowLength + 24, 4);
+        const rot = new Uint8ClampedArray(buffer, outRow * rowLength + 28, 4);
+        const SH_C0 = 0.28209479177387814;
 
-        const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
-        const outBuffer = new ArrayBuffer(rowLength * totalVertices);
+        position[0] = plyAttr(elem, dv, base, "x") ?? 0;
+        position[1] = plyAttr(elem, dv, base, "y") ?? 0;
+        position[2] = plyAttr(elem, dv, base, "z") ?? 0;
 
-        let axisCounts = new Uint32Array(totalVertices);
-        let sgStarts = new Uint32Array(totalVertices);
-        let sgRows = [];
-
-        let dataOffset = header_end_index + header_end.length;
-        let outRow = 0;
-        let sgRowCursor = 0;
-
-        for (let elem of elements) {
-            for (let i = 0; i < elem.count; i++) {
-                const base = dataOffset + i * elem.stride;
-                const dv = new DataView(inputBuffer, base, elem.stride);
-                const get = (name) => {
-                    const t = elem.types[name];
-                    if (!t) return undefined;
-                    return dv[t](elem.offsets[name], true);
-                };
-
-                const position = new Float32Array(outBuffer, outRow * rowLength, 3);
-                const scales = new Float32Array(outBuffer, outRow * rowLength + 4 * 3, 3);
-                const rgba = new Uint8ClampedArray(outBuffer, outRow * rowLength + 4 * 3 + 4 * 3, 4);
-                const rot = new Uint8ClampedArray(outBuffer, outRow * rowLength + 4 * 3 + 4 * 3 + 4, 4);
-
-                position[0] = get('x') ?? 0;
-                position[1] = get('y') ?? 0;
-                position[2] = get('z') ?? 0;
-
-                if (elem.types['scale_0']) {
-                    const q0 = get('rot_0') ?? 1, q1 = get('rot_1') ?? 0, q2 = get('rot_2') ?? 0, q3 = get('rot_3') ?? 0;
-                    const qlen = Math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3) || 1;
-                    rot[0] = (q0 / qlen) * 128 + 128;
-                    rot[1] = (q1 / qlen) * 128 + 128;
-                    rot[2] = (q2 / qlen) * 128 + 128;
-                    rot[3] = (q3 / qlen) * 128 + 128;
-                    scales[0] = Math.exp(get('scale_0'));
-                    scales[1] = Math.exp(get('scale_1'));
-                    scales[2] = Math.exp(get('scale_2'));
-                } else {
-                    scales[0] = 0.01; scales[1] = 0.01; scales[2] = 0.01;
-                    rot[0] = 255; rot[1] = 0; rot[2] = 0; rot[3] = 0;
-                }
-
-                const opacityRaw = get('opacity');
-                const alpha = opacityRaw !== undefined ? (1 / (1 + Math.exp(-opacityRaw))) : 1.0;
-                const br = get('rgb_base_0') ?? 0, bg = get('rgb_base_1') ?? 0, bb = get('rgb_base_2') ?? 0;
-
-                const SH_C0 = 0.28209479177387814;
-                rgba[0] = (0.5 + SH_C0 * br) * 255;
-                rgba[1] = (0.5 + SH_C0 * bg) * 255;
-                rgba[2] = (0.5 + SH_C0 * bb) * 255;
-                rgba[3] = Math.max(0, Math.min(255, Math.round(alpha * 255)));
-
-                let inferred = 0;
-                const m = elem.name.match(/^vertex_(\d+)$/);
-                if (m) inferred = parseInt(m[1]);
-                const ac = Math.max(0, Math.min(3, ((get('sg_axis_count') ?? inferred) | 0)));
-                axisCounts[outRow] = ac;
-                sgStarts[outRow] = sgRowCursor;
-
-                for (let a = 0; a < ac; a++) {
-                    const dirx = get(`sg_dir_${a}_0`) ?? 0;
-                    const diry = get(`sg_dir_${a}_1`) ?? 0;
-                    const dirz = get(`sg_dir_${a}_2`) ?? 0;
-                    const sharp = get(`sg_sharp_${a}`) ?? 0;
-                    const rgbr = get(`sg_rgb_${a}_0`) ?? 0;
-                    const rgbg = get(`sg_rgb_${a}_1`) ?? 0;
-                    const rgbb = get(`sg_rgb_${a}_2`) ?? 0;
-                    sgRows.push([dirx, diry, dirz, sharp]);
-                    sgRows.push([rgbr, rgbg, rgbb, 0]);
-                    sgRowCursor += 1;
-                }
-
-                outRow++;
-            }
-            dataOffset += elem.count * elem.stride;
+        if (elem.types["scale_0"]) {
+            const q0 = plyAttr(elem, dv, base, "rot_0") ?? 1;
+            const q1 = plyAttr(elem, dv, base, "rot_1") ?? 0;
+            const q2 = plyAttr(elem, dv, base, "rot_2") ?? 0;
+            const q3 = plyAttr(elem, dv, base, "rot_3") ?? 0;
+            const qlen = Math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3) || 1;
+            rot[0] = (q0 / qlen) * 128 + 128;
+            rot[1] = (q1 / qlen) * 128 + 128;
+            rot[2] = (q2 / qlen) * 128 + 128;
+            rot[3] = (q3 / qlen) * 128 + 128;
+            scales[0] = Math.exp(plyAttr(elem, dv, base, "scale_0"));
+            scales[1] = Math.exp(plyAttr(elem, dv, base, "scale_1"));
+            scales[2] = Math.exp(plyAttr(elem, dv, base, "scale_2"));
+        } else {
+            scales[0] = 0.01;
+            scales[1] = 0.01;
+            scales[2] = 0.01;
+            rot[0] = 255;
+            rot[1] = 0;
+            rot[2] = 0;
+            rot[3] = 0;
         }
 
-        console.time("build buffer");
-        console.timeEnd("build buffer");
-        return outBuffer;
+        if (FORMAT === "sh") {
+            if (elem.types["f_dc_0"]) {
+                rgba[0] = (0.5 + SH_C0 * plyAttr(elem, dv, base, "f_dc_0")) * 255;
+                rgba[1] = (0.5 + SH_C0 * plyAttr(elem, dv, base, "f_dc_1")) * 255;
+                rgba[2] = (0.5 + SH_C0 * plyAttr(elem, dv, base, "f_dc_2")) * 255;
+            } else {
+                rgba[0] = plyAttr(elem, dv, base, "red") ?? plyAttr(elem, dv, base, "r") ?? 220;
+                rgba[1] = plyAttr(elem, dv, base, "green") ?? plyAttr(elem, dv, base, "g") ?? 220;
+                rgba[2] = plyAttr(elem, dv, base, "blue") ?? plyAttr(elem, dv, base, "b") ?? 220;
+            }
+            rgba[3] = elem.types["opacity"]
+                ? (1 / (1 + Math.exp(-plyAttr(elem, dv, base, "opacity")))) * 255
+                : 255;
+
+            if (elem.types["f_dc_0"]) {
+                const shOffset = outRow * 48 * 4;
+                for (let i = 0; i < 45; i++) {
+                    const value = elem.types[`f_rest_${i}`]
+                        ? plyAttr(elem, dv, base, `f_rest_${i}`)
+                        : 0;
+                    if (i < 15) {
+                        plyJob.shView.setFloat32(shOffset + 12 + i * 4, value, true);
+                    } else if (i < 30) {
+                        plyJob.shView.setFloat32(shOffset + 12 + (i - 15 + 15) * 4, value, true);
+                    } else {
+                        plyJob.shView.setFloat32(shOffset + 12 + (i - 30 + 30) * 4, value, true);
+                    }
+                }
+                plyJob.shView.setFloat32(shOffset + 0, plyAttr(elem, dv, base, "f_dc_0"), true);
+                plyJob.shView.setFloat32(shOffset + 4, plyAttr(elem, dv, base, "f_dc_1"), true);
+                plyJob.shView.setFloat32(shOffset + 8, plyAttr(elem, dv, base, "f_dc_2"), true);
+            }
+        } else { // sg
+            const opacityRaw = plyAttr(elem, dv, base, "opacity");
+            const alpha = opacityRaw !== undefined ? 1 / (1 + Math.exp(-opacityRaw)) : 1.0;
+            const br = plyAttr(elem, dv, base, "rgb_base_0") ?? 0;
+            const bg = plyAttr(elem, dv, base, "rgb_base_1") ?? 0;
+            const bb = plyAttr(elem, dv, base, "rgb_base_2") ?? 0;
+            rgba[0] = (0.5 + SH_C0 * br) * 255;
+            rgba[1] = (0.5 + SH_C0 * bg) * 255;
+            rgba[2] = (0.5 + SH_C0 * bb) * 255;
+            rgba[3] = Math.max(0, Math.min(255, Math.round(alpha * 255)));
+
+            let inferred = 0;
+            const m = elem.name.match(/^vertex_(\d+)$/);
+            if (m) inferred = parseInt(m[1]);
+            const ac = Math.max(0, Math.min(3, ((plyAttr(elem, dv, base, "sg_axis_count") ?? inferred) | 0)));
+            axisCounts[outRow] = ac;
+            sgStarts[outRow] = sgRowCursor;
+
+            for (let a = 0; a < ac; a++) {
+                const dirx = plyAttr(elem, dv, base, `sg_dir_${a}_0`) ?? 0;
+                const diry = plyAttr(elem, dv, base, `sg_dir_${a}_1`) ?? 0;
+                const dirz = plyAttr(elem, dv, base, `sg_dir_${a}_2`) ?? 0;
+                const sharp = plyAttr(elem, dv, base, `sg_sharp_${a}`) ?? 0;
+                const rgbr = plyAttr(elem, dv, base, `sg_rgb_${a}_0`) ?? 0;
+                const rgbg = plyAttr(elem, dv, base, `sg_rgb_${a}_1`) ?? 0;
+                const rgbb = plyAttr(elem, dv, base, `sg_rgb_${a}_2`) ?? 0;
+                sgRows.push([dirx, diry, dirz, sharp]);
+                sgRows.push([rgbr, rgbg, rgbb, 0]);
+                sgRowCursor += 1;
+            }
+        }
+    }
+
+    function plyInit(layout) {
+        plyJob = {
+            total: layout.total,
+            elements: layout.elements,
+            elemIdx: 0,
+            rowInElem: 0,
+            outRow: 0,
+            save: false,
+            carry: new Uint8Array(1 << 20),
+            carryLen: 0,
+            shView: null,
+        };
+        buffer = new ArrayBuffer(rowLength * layout.total);
+        vertexCount = 0;
+        lastVertexCount = 0;
+        if (FORMAT === "sh") {
+            shBuffer = new ArrayBuffer(48 * 4 * layout.total);
+            plyJob.shView = new DataView(shBuffer);
+        } else {
+            sgRows = [];
+            sgStarts = new Uint32Array(layout.total);
+            axisCounts = new Uint32Array(layout.total);
+            sgRowCursor = 0;
+        }
+        self.postMessage({ plyLayout: { total: layout.total } });
+    }
+
+    function plyIngest(rawBuffer) {
+        if (!plyJob) return;
+        const needed = plyJob.carryLen + rawBuffer.byteLength;
+        if (plyJob.carry.length < needed) {
+            let cap = plyJob.carry.length * 2;
+            while (cap < needed) cap *= 2;
+            const bigger = new Uint8Array(cap);
+            bigger.set(plyJob.carry.subarray(0, plyJob.carryLen), 0);
+            plyJob.carry = bigger;
+        }
+        plyJob.carry.set(new Uint8Array(rawBuffer), plyJob.carryLen);
+        plyJob.carryLen = needed;
+
+        const dv = new DataView(plyJob.carry.buffer);
+        let cursor = 0;
+        while (plyJob.elemIdx < plyJob.elements.length) {
+            const elem = plyJob.elements[plyJob.elemIdx];
+            if (plyJob.rowInElem >= elem.count) {
+                plyJob.elemIdx += 1;
+                plyJob.rowInElem = 0;
+                continue;
+            }
+            if (plyJob.carryLen - cursor < elem.stride) break;
+            plyConvertRow(elem, dv, cursor, plyJob.outRow);
+            cursor += elem.stride;
+            plyJob.rowInElem += 1;
+            plyJob.outRow += 1;
+        }
+        plyJob.carry.copyWithin(0, cursor, plyJob.carryLen);
+        plyJob.carryLen -= cursor;
+        vertexCount = plyJob.outRow;
+        self.postMessage({ plyParsed: plyJob.outRow, plyTotal: plyJob.total });
+    }
+
+    function plyFinalize() {
+        if (!plyJob) return;
+        const save = plyJob.save;
+        vertexCount = plyJob.outRow;
+        plyJob = null;
+        runSort(viewProj);
+        postMessage({ buffer: buffer, save: !!save });
+    }
+
+    function plyFeed(rawBuffer) {
+        if (plyJob) {
+            plyIngest(rawBuffer);
+            return;
+        }
+        // Accumulate bytes until the header is complete, then initialize.
+        const merged = new Uint8Array(plyPreHeader.length + rawBuffer.byteLength);
+        merged.set(plyPreHeader, 0);
+        merged.set(new Uint8Array(rawBuffer), plyPreHeader.length);
+        plyPreHeader = merged;
+        if (plyPreHeader.length > 4 * 1024 * 1024) {
+            self.postMessage({ plyError: "PLY header is too large" });
+            plyPreHeader = new Uint8Array(0);
+            return;
+        }
+        const headText = new TextDecoder().decode(
+            plyPreHeader.subarray(0, Math.min(plyPreHeader.length, 1024 * 10)),
+        );
+        const parsed = parsePlyLayout(headText);
+        if (parsed.status === "incomplete") return;
+        if (parsed.status === "unsupported") {
+            self.postMessage({ plyError: parsed.reason });
+            plyPreHeader = new Uint8Array(0);
+            return;
+        }
+        const dataStart = parsed.dataStart;
+        plyInit({ total: parsed.total, elements: parsed.elements });
+        if (plyPreHeader.length > dataStart) {
+            plyIngest(plyPreHeader.buffer.slice(dataStart, plyPreHeader.length));
+        }
+        plyPreHeader = new Uint8Array(0);
     }
 
     const throttledSort = () => {
@@ -653,16 +855,18 @@ function createWorker(self) {
     };
 
     let sortRunning;
+
     self.onmessage = (e) => {
-        if (e.data.ply) {
-            vertexCount = 0;
-            runSort(viewProj);
-            buffer = processPlyBuffer(e.data.ply);
-            vertexCount = Math.floor(buffer.byteLength / rowLength);
-            postMessage({ buffer: buffer, save: !!e.data.save });
+        if (e.data.plyRaw) {
+            plyFeed(e.data.plyRaw);
+        } else if (e.data.plyDone) {
+            plyFinalize();
         } else if (e.data.buffer) {
-            buffer = e.data.buffer;
-            vertexCount = e.data.vertexCount;
+            const rawBuffer = e.data.buffer;
+            const completeBytes = Math.floor(rawBuffer.byteLength / rowLength) * rowLength;
+            buffer = completeBytes > 0 ? rawBuffer.slice(0, completeBytes) : rawBuffer;
+            const safeVertexCount = Math.floor((buffer?.byteLength ?? 0) / rowLength);
+            vertexCount = Math.min(e.data.vertexCount ?? safeVertexCount, safeVertexCount);
         } else if (e.data.vertexCount) {
             vertexCount = e.data.vertexCount;
         } else if (e.data.view) {
@@ -670,20 +874,21 @@ function createWorker(self) {
             throttledSort();
         }
     };
+
 }
 
-const vertexShaderSource = `
+const vertexShaderSource = FORMAT === "sg" ? `
 #version 300 es
 precision highp float;
 precision highp int;
 
 uniform highp usampler2D u_texture;
-uniform highp sampler2D u_texture_sg;      
-uniform highp usampler2D u_texture_index;  
+uniform highp sampler2D u_texture_sg;
+uniform highp usampler2D u_texture_index;
 uniform mat4 projection, view;
 uniform vec2 focal;
 uniform vec2 viewport;
-uniform vec3 camPos;                        
+uniform vec3 camPos;
 
 in vec2 position;
 in int index;
@@ -724,7 +929,7 @@ void main () {
     vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
     vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
 
-    int tex_width_index = 2048; 
+    int tex_width_index = 2048;
     int tex_x_index = index % tex_width_index;
     int tex_y_index = index / tex_width_index;
     uvec4 index_info = texelFetch(u_texture_index, ivec2(tex_x_index, tex_y_index), 0);
@@ -736,13 +941,13 @@ void main () {
 
     vec3 sg_contrib = vec3(0.0);
     int count = sg_count;
-    for (int i = 0; i < 16; ++i) { 
+    for (int i = 0; i < 16; ++i) {
         if (i >= count) break;
         int sg_global_index = sg_start + i;
-        int tex_width = 2048; 
+        int tex_width = 2048;
         int tex_x = sg_global_index % tex_width;
-        int tex_y = (sg_global_index / tex_width) * 2; 
-        
+        int tex_y = (sg_global_index / tex_width) * 2;
+
         vec4 sg_dir_sharp = texelFetch(u_texture_sg, ivec2(tex_x, tex_y), 0);
         vec3 sg_dir = sg_dir_sharp.xyz;
         float sg_sharp = sg_dir_sharp.w;
@@ -757,7 +962,7 @@ void main () {
         float((cov.w >> 8) & 0xffu),
         float((cov.w >> 16) & 0xffu)
     ) / 255.0;
-    float alpha = float((cov.w >> 24) & 0xffu) / 255.0; 
+    float alpha = float((cov.w >> 24) & 0xffu) / 255.0;
     vec3 final_rgb = base_rgb + sg_contrib;
     vColor = vec4(final_rgb, alpha);
     vPosition = position;
@@ -767,6 +972,187 @@ void main () {
         vCenter
         + position.x * majorAxis / viewport
         + position.y * minorAxis / viewport, 0.0, 1.0);
+}
+`.trim() : `
+#version 300 es
+precision highp float;
+precision highp int;
+
+uniform highp usampler2D u_texture;
+uniform highp sampler2D u_sh_texture;
+uniform mat4 projection, view;
+uniform vec2 focal;
+uniform vec2 viewport;
+uniform vec3 camPos;
+
+in vec2 position;
+in int index;
+
+out vec4 vColor;
+out vec2 vPosition;
+
+const float SH_C0 = 0.28209479177387814;
+const float SH_C1 = 0.4886025119029199;
+const float SH_C2[5] = float[5](1.0925484305920792, -1.0925484305920792, 0.31539156525252005, -1.0925484305920792, 0.5462742152960396);
+const float SH_C3[7] = float[7](-0.5900435899266435, 2.890611442640554, -0.4570457994644658, 0.3731763325901154, -0.4570457994644658, 1.445305721320277, -0.5900435899266435);
+
+float computeSHChannel(vec3 dir, int channel, int vertexIndex) {
+    int texWidth = 8192;
+
+    float sh[48];
+    for (int i = 0; i < 48; i++) {
+        int globalPixelIndex = i / 4;
+
+        int texX = (vertexIndex * 12 + globalPixelIndex) % texWidth;
+        int texY = (vertexIndex * 12 + globalPixelIndex) / texWidth;
+
+        ivec2 texCoord = ivec2(texX, texY);
+        vec4 pixel = texelFetch(u_sh_texture, texCoord, 0);
+
+        int channelInPixel = i % 4;
+        sh[i] = pixel[channelInPixel];
+    }
+
+    float shCoeffs[16];
+
+    if (channel == 0) {
+        shCoeffs[0] = sh[0];
+
+        shCoeffs[1] = sh[3];
+        shCoeffs[2] = sh[4];
+        shCoeffs[3] = sh[5];
+
+        shCoeffs[4] = sh[6];
+        shCoeffs[5] = sh[7];
+        shCoeffs[6] = sh[8];
+        shCoeffs[7] = sh[9];
+        shCoeffs[8] = sh[10];
+
+        shCoeffs[9] = sh[11];
+        shCoeffs[10] = sh[12];
+        shCoeffs[11] = sh[13];
+        shCoeffs[12] = sh[14];
+        shCoeffs[13] = sh[15];
+        shCoeffs[14] = sh[16];
+        shCoeffs[15] = sh[17];
+    } else if (channel == 1) {
+        shCoeffs[0] = sh[1];
+
+        shCoeffs[1] = sh[18];
+        shCoeffs[2] = sh[19];
+        shCoeffs[3] = sh[20];
+
+        shCoeffs[4] = sh[21];
+        shCoeffs[5] = sh[22];
+        shCoeffs[6] = sh[23];
+        shCoeffs[7] = sh[24];
+        shCoeffs[8] = sh[25];
+
+        shCoeffs[9] = sh[26];
+        shCoeffs[10] = sh[27];
+        shCoeffs[11] = sh[28];
+        shCoeffs[12] = sh[29];
+        shCoeffs[13] = sh[30];
+        shCoeffs[14] = sh[31];
+        shCoeffs[15] = sh[32];
+    } else {
+        shCoeffs[0] = sh[2];
+
+        shCoeffs[1] = sh[33];
+        shCoeffs[2] = sh[34];
+        shCoeffs[3] = sh[35];
+
+        shCoeffs[4] = sh[36];
+        shCoeffs[5] = sh[37];
+        shCoeffs[6] = sh[38];
+        shCoeffs[7] = sh[39];
+        shCoeffs[8] = sh[40];
+
+        shCoeffs[9] = sh[41];
+        shCoeffs[10] = sh[42];
+        shCoeffs[11] = sh[43];
+        shCoeffs[12] = sh[44];
+        shCoeffs[13] = sh[45];
+        shCoeffs[14] = sh[46];
+        shCoeffs[15] = sh[47];
+    }
+
+    float x = dir.x, y = dir.y, z = dir.z;
+    float result = SH_C0 * shCoeffs[0];
+
+    result = result - SH_C1 * y * shCoeffs[1] + SH_C1 * z * shCoeffs[2] - SH_C1 * x * shCoeffs[3];
+
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, yz = y * z, xz = x * z;
+    result = result +
+        SH_C2[0] * xy * shCoeffs[4] +
+        SH_C2[1] * yz * shCoeffs[5] +
+        SH_C2[2] * (2.0 * zz - xx - yy) * shCoeffs[6] +
+        SH_C2[3] * xz * shCoeffs[7] +
+        SH_C2[4] * (xx - yy) * shCoeffs[8];
+
+    result = result +
+        SH_C3[0] * y * (3.0 * xx - yy) * shCoeffs[9] +
+        SH_C3[1] * xy * z * shCoeffs[10] +
+        SH_C3[2] * y * (4.0 * zz - xx - yy) * shCoeffs[11] +
+        SH_C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * shCoeffs[12] +
+        SH_C3[4] * x * (4.0 * zz - xx - yy) * shCoeffs[13] +
+        SH_C3[5] * z * (xx - yy) * shCoeffs[14] +
+        SH_C3[6] * x * (xx - 3.0 * yy) * shCoeffs[15];
+
+    return max(result+0.5, 0.0);
+}
+
+void main() {
+    uvec4 cen = texelFetch(u_texture, ivec2((uint(index) & 0x3ffu) << 1, uint(index) >> 10), 0);
+    vec4 cam = view * vec4(uintBitsToFloat(cen.xyz), 1);
+    vec4 pos2d = projection * cam;
+
+    float clip = 1.2 * pos2d.w;
+    if (pos2d.z < -clip || pos2d.x < -clip || pos2d.x > clip || pos2d.y < -clip || pos2d.y > clip) {
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+        return;
+    }
+
+    uvec4 cov = texelFetch(u_texture, ivec2(((uint(index) & 0x3ffu) << 1) | 1u, uint(index) >> 10), 0);
+    vec2 u1 = unpackHalf2x16(cov.x), u2 = unpackHalf2x16(cov.y), u3 = unpackHalf2x16(cov.z);
+    mat3 Vrk = mat3(u1.x, u1.y, u2.x, u1.y, u2.y, u3.x, u2.x, u3.x, u3.y);
+
+    mat3 J = mat3(
+        focal.x / cam.z, 0., -(focal.x * cam.x) / (cam.z * cam.z),
+        0., -focal.y / cam.z, (focal.y * cam.y) / (cam.z * cam.z),
+        0., 0., 0.
+    );
+
+    mat3 T = transpose(mat3(view)) * J;
+    mat3 cov2d = transpose(T) * Vrk * T;
+
+    float mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
+    float radius = length(vec2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
+    float lambda1 = mid + radius, lambda2 = mid - radius;
+
+    if(lambda2 < 0.0) return;
+    vec2 diagonalVector = normalize(vec2(cov2d[0][1], lambda1 - cov2d[0][0]));
+    vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
+    vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
+
+    vec3 center_world = uintBitsToFloat(cen.xyz);
+    vec3 view_dir = normalize(camPos - center_world);
+
+    float r = computeSHChannel(view_dir, 0, index);
+    float g = computeSHChannel(view_dir, 1, index);
+    float b = computeSHChannel(view_dir, 2, index);
+
+    float alpha = float((cov.w >> 24) & 0xffu) / 255.0;
+    vColor = vec4(r, g, b, alpha);
+    vPosition = position;
+
+    vec2 vCenter = vec2(pos2d) / pos2d.w;
+    gl_Position = vec4(
+        vCenter
+        + position.x * majorAxis / viewport
+        + position.y * minorAxis / viewport, 0.0, 1.0);
+
 }
 `.trim();
 
@@ -801,29 +1187,34 @@ async function main() {
         carousel = false;
     } catch (err) { }
     const url = new URL(
-        params.get("url") || "./point_cloud.ply",
+        params.get("url") || (FORMAT === "sg" ? "./point_cloud.ply" : "./bicycle_30000.ply"),
         location.href
     );
 
     const req = await fetch(url, {
-        mode: "cors", // no-cors, *cors, same-origin
-        credentials: "omit", // include, *same-origin, omit
+        mode: "cors",
+        credentials: "omit",
     });
-    console.log(req);
     if (req.status != 200)
         throw new Error(req.status + " Unable to load " + req.url);
 
     const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
     const reader = req.body.getReader();
-    let splatData = new Uint8Array(req.headers.get("content-length"));
+    // Content-Length may be absent (chunked responses); the buffer grows on demand.
+    const contentLength = parseInt(req.headers.get("content-length") || "0") || 0;
+    let splatData = new Uint8Array(contentLength || (1 << 20));
+    let bytesRead = 0;
 
-    const downsample =
-        splatData.length / rowLength > 500000 ? 1 : 1 / devicePixelRatio;
-    console.log(splatData.length / rowLength, downsample);
+    let downsample = contentLength
+        ? (contentLength / rowLength > 500000 ? 1 : 1 / devicePixelRatio)
+        : 1;
+
+    let plyExpectedRows = 0;
+    let plyParsedRows = 0;
 
     const worker = new Worker(
         URL.createObjectURL(
-            new Blob(["(", createWorker.toString(), ")(self)"], {
+            new Blob(["const FORMAT = " + JSON.stringify(FORMAT) + ";(", createWorker.toString(), ")(self)"], {
                 type: "application/javascript",
             }),
         ),
@@ -836,7 +1227,7 @@ async function main() {
     let projectionMatrix;
 
     const gl = canvas.getContext("webgl2", {
-        antialias: true,
+        antialias: FORMAT === "sg",
     });
 
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -860,9 +1251,7 @@ async function main() {
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
         console.error(gl.getProgramInfoLog(program));
 
-    gl.disable(gl.DEPTH_TEST); // Disable depth testing
-
-    // Enable blending
+    gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(
         gl.ONE_MINUS_DST_ALPHA,
@@ -888,17 +1277,45 @@ async function main() {
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
     gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
 
-    var texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-
+    var mainTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, mainTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array([0, 0, 0, 0]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     var u_textureLocation = gl.getUniformLocation(program, "u_texture");
     gl.uniform1i(u_textureLocation, 0);
-    var texture_sg = gl.createTexture();
-    var texture_index = gl.createTexture();
-    var u_texture_sg = gl.getUniformLocation(program, "u_texture_sg");
-    var u_texture_index = gl.getUniformLocation(program, "u_texture_index");
-    gl.uniform1i(u_texture_sg, 1);
-    gl.uniform1i(u_texture_index, 2);
+
+    var shTexture = null, texture_sg = null, texture_index = null;
+    if (FORMAT === "sg") {
+        texture_sg = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture_sg);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array([0, 0, 0, 0]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.uniform1i(gl.getUniformLocation(program, "u_texture_sg"), 1);
+
+        texture_index = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture_index);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array([0, 0, 0, 0]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.uniform1i(gl.getUniformLocation(program, "u_texture_index"), 2);
+    } else {
+        shTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, shTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array([0, 0, 0, 0]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.uniform1i(gl.getUniformLocation(program, "u_sh_texture"), 1);
+    }
 
     const indexBuffer = gl.createBuffer();
     const a_index = gl.getAttribLocation(program, "index");
@@ -944,8 +1361,8 @@ async function main() {
             }
         } else if (e.data.texdata) {
             const { texdata, texwidth, texheight } = e.data;
-            // console.log(texdata)
-            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mainTexture);
             gl.texParameteri(
                 gl.TEXTURE_2D,
                 gl.TEXTURE_WRAP_S,
@@ -970,33 +1387,50 @@ async function main() {
                 gl.UNSIGNED_INT,
                 texdata,
             );
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-        } else if (e.data.texdata_sg) {
+        } else if (FORMAT === "sh" && e.data.texdata_sh) {
+            const { texdata_sh, texwidth_sh, texheight_sh } = e.data;
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, shTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, texwidth_sh, texheight_sh, 0, gl.RGBA, gl.FLOAT, texdata_sh);
+        } else if (FORMAT === "sg" && e.data.texdata_sg) {
             const { texdata_sg, texwidth_sg, texheight_sg } = e.data;
+            gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, texture_sg);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, texwidth_sg, texheight_sg, 0, gl.RGBA, gl.FLOAT, texdata_sg);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, texture_sg);
-        } else if (e.data.texdata_index) {
+        } else if (FORMAT === "sg" && e.data.texdata_index) {
             const { texdata_index, texwidth_index, texheight_index } = e.data;
+            gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, texture_index);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, texwidth_index, texheight_index, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, texdata_index);
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, texture_index);
         } else if (e.data.depthIndex) {
             const { depthIndex, viewProj } = e.data;
             gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
             vertexCount = e.data.vertexCount;
+        } else if (e.data.plyLayout) {
+            plyExpectedRows = e.data.plyLayout.total;
+            const wanted = plyExpectedRows > 500000 ? 1 : 1 / devicePixelRatio;
+            if (wanted !== downsample) {
+                downsample = wanted;
+                resize();
+            }
+        } else if (e.data.plyParsed) {
+            plyParsedRows = e.data.plyParsed;
+        } else if (e.data.plyError) {
+            console.error("PLY load failed:", e.data.plyError);
+            document.getElementById("message").innerText = "PLY load failed: " + e.data.plyError;
         }
     };
 
@@ -1004,7 +1438,6 @@ async function main() {
     let currentCameraIndex = 0;
 
     window.addEventListener("keydown", (e) => {
-        // if (document.activeElement != document.body) return;
         carousel = false;
         if (!activeKeys.includes(e.code)) activeKeys.push(e.code);
         if (/\d/.test(e.key)) {
@@ -1062,16 +1495,12 @@ async function main() {
                     0,
                 );
             } else if (e.ctrlKey || e.metaKey) {
-                // inv = rotate4(inv,  (e.deltaX * scale) / innerWidth,  0, 0, 1);
-                // inv = translate4(inv,  0, (e.deltaY * scale) / innerHeight, 0);
-                // let preY = inv[13];
                 inv = translate4(
                     inv,
                     0,
                     0,
                     (-10 * (e.deltaY * scale)) / innerHeight,
                 );
-                // inv[13] = preY;
             } else {
                 let d = 4;
                 inv = translate4(inv, 0, 0, d);
@@ -1113,24 +1542,18 @@ async function main() {
             inv = rotate4(inv, dx, 0, 1, 0);
             inv = rotate4(inv, -dy, 1, 0, 0);
             inv = translate4(inv, 0, 0, -d);
-            // let postAngle = Math.atan2(inv[0], inv[10])
-            // inv = rotate4(inv, postAngle - preAngle, 0, 0, 1)
-            // console.log(postAngle)
             viewMatrix = invert4(inv);
 
             startX = e.clientX;
             startY = e.clientY;
         } else if (down == 2) {
             let inv = invert4(viewMatrix);
-            // inv = rotateY(inv, );
-            // let preY = inv[13];
             inv = translate4(
                 inv,
                 (-10 * (e.clientX - startX)) / innerWidth,
                 0,
                 (10 * (e.clientY - startY)) / innerHeight,
             );
-            // inv[13] = preY;
             viewMatrix = invert4(inv);
 
             startX = e.clientX;
@@ -1156,7 +1579,6 @@ async function main() {
                 startY = e.touches[0].clientY;
                 down = 1;
             } else if (e.touches.length === 2) {
-                // console.log('beep')
                 carousel = false;
                 startX = e.touches[0].clientX;
                 altX = e.touches[1].clientX;
@@ -1178,8 +1600,6 @@ async function main() {
 
                 let d = 4;
                 inv = translate4(inv, 0, 0, d);
-                // inv = translate4(inv,  -x, -y, -z);
-                // inv = translate4(inv,  x, y, z);
                 inv = rotate4(inv, dx, 0, 1, 0);
                 inv = rotate4(inv, -dy, 1, 0, 0);
                 inv = translate4(inv, 0, 0, -d);
@@ -1189,7 +1609,6 @@ async function main() {
                 startX = e.touches[0].clientX;
                 startY = e.touches[0].clientY;
             } else if (e.touches.length === 2) {
-                // alert('beep')
                 const dtheta =
                     Math.atan2(startY - altY, startX - altX) -
                     Math.atan2(
@@ -1213,14 +1632,11 @@ async function main() {
                         (startY + altY)) /
                     2;
                 let inv = invert4(viewMatrix);
-                // inv = translate4(inv,  0, 0, d);
                 inv = rotate4(inv, dtheta, 0, 0, 1);
 
                 inv = translate4(inv, -dx / innerWidth, -dy / innerHeight, 0);
 
-                // let preY = inv[13];
                 inv = translate4(inv, 0, 0, 3 * (1 - dscale));
-                // inv[13] = preY;
 
                 viewMatrix = invert4(inv);
 
@@ -1249,10 +1665,10 @@ async function main() {
     let lastFrame = 0;
     let avgFps = 0;
     let start = 0;
-    
+
     let gLastFrame = window.performance.now();
     let oldMilliseconds = 1000;
-    let smoothFps = 60.0; 
+    let smoothFps = 60.0;
 
     window.addEventListener("gamepadconnected", (e) => {
         const gp = navigator.getGamepads()[e.gamepad.index];
@@ -1275,41 +1691,38 @@ async function main() {
 
         if (activeKeys.includes("ArrowUp")) {
             if (shiftKey) {
-                inv = translate4(inv, 0, -0.01, 0);
+                inv = translate4(inv, 0, -0.03, 0);
             } else {
-                inv = translate4(inv, 0, 0, 0.01);
+                inv = translate4(inv, 0, 0, 0.1);
             }
         }
         if (activeKeys.includes("ArrowDown")) {
             if (shiftKey) {
-                inv = translate4(inv, 0, 0.01, 0);
+                inv = translate4(inv, 0, 0.03, 0);
             } else {
-                inv = translate4(inv, 0, 0, -0.01);
+                inv = translate4(inv, 0, 0, -0.1);
             }
         }
         if (activeKeys.includes("ArrowLeft"))
-            inv = translate4(inv, -0.005, 0, 0);
-        //
+            inv = translate4(inv, -0.03, 0, 0);
         if (activeKeys.includes("ArrowRight"))
-            inv = translate4(inv, 0.005, 0, 0);
-        // inv = rotate4(inv, 0.01, 0, 1, 0);
-        if (activeKeys.includes("KeyA")) inv = rotate4(inv, -0.003, 0, 1, 0);
-        if (activeKeys.includes("KeyD")) inv = rotate4(inv, 0.003, 0, 1, 0);
-        if (activeKeys.includes("KeyQ")) inv = rotate4(inv, 0.003, 0, 0, 1);
-        if (activeKeys.includes("KeyE")) inv = rotate4(inv, -0.003, 0, 0, 1);
-        if (activeKeys.includes("KeyW")) inv = rotate4(inv, 0.003, 1, 0, 0);
-        if (activeKeys.includes("KeyS")) inv = rotate4(inv, -0.003, 1, 0, 0);
+            inv = translate4(inv, 0.03, 0, 0);
+        if (activeKeys.includes("KeyA")) inv = rotate4(inv, -0.01, 0, 1, 0);
+        if (activeKeys.includes("KeyD")) inv = rotate4(inv, 0.01, 0, 1, 0);
+        if (activeKeys.includes("KeyQ")) inv = rotate4(inv, 0.01, 0, 0, 1);
+        if (activeKeys.includes("KeyE")) inv = rotate4(inv, -0.01, 0, 0, 1);
+        if (activeKeys.includes("KeyW")) inv = rotate4(inv, 0.005, 1, 0, 0);
+        if (activeKeys.includes("KeyS")) inv = rotate4(inv, -0.005, 1, 0, 0);
 
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
         let isJumping = activeKeys.includes("Space");
         for (let gamepad of gamepads) {
             if (!gamepad) continue;
 
-            const axisThreshold = 0.1; // Threshold to detect when the axis is intentionally moved
+            const axisThreshold = 0.1;
             const moveSpeed = 0.06;
             const rotateSpeed = 0.02;
 
-            // Assuming the left stick controls translation (axes 0 and 1)
             if (Math.abs(gamepad.axes[0]) > axisThreshold) {
                 inv = translate4(inv, moveSpeed * gamepad.axes[0], 0, 0);
                 carousel = false;
@@ -1342,7 +1755,6 @@ async function main() {
                 carousel = false;
             }
 
-            // Assuming the right stick controls rotation (axes 2 and 3)
             if (Math.abs(gamepad.axes[2]) > axisThreshold) {
                 inv = rotate4(inv, rotateSpeed * gamepad.axes[2], 0, 1, 0);
                 carousel = false;
@@ -1391,9 +1803,9 @@ async function main() {
             inv = rotate4(
                 inv,
                 activeKeys.includes("KeyJ")
-                    ? -0.003
+                    ? -0.05
                     : activeKeys.includes("KeyL")
-                        ? 0.003
+                        ? 0.05
                         : 0,
                 0,
                 1,
@@ -1402,9 +1814,9 @@ async function main() {
             inv = rotate4(
                 inv,
                 activeKeys.includes("KeyI")
-                    ? 0.003
+                    ? 0.05
                     : activeKeys.includes("KeyK")
-                        ? -0.003
+                        ? -0.05
                         : 0,
                 1,
                 0,
@@ -1436,16 +1848,20 @@ async function main() {
         inv2 = rotate4(inv2, -0.1 * jumpDelta, 1, 0, 0);
         let actualViewMatrix = invert4(inv2);
 
+        const cameraPos = [
+            actualViewMatrix[12],
+            actualViewMatrix[13],
+            actualViewMatrix[14]
+        ];
+
+        gl.uniform3fv(u_camPos, cameraPos);
+
         const viewProj = multiply4(projectionMatrix, actualViewMatrix);
-        let invView = invert4(actualViewMatrix);
-        if (invView) {
-            gl.uniform3fv(u_camPos, new Float32Array([invView[12], invView[13], invView[14]]));
-        }
         worker.postMessage({ view: viewProj });
 
         const currentFps = 1000 / (now - lastFrame) || 0;
         avgFps = avgFps * 0.9 + currentFps * 0.1;
-        
+
         let currentFrame = window.performance.now();
         let milliseconds = currentFrame - gLastFrame;
         let smoothMilliseconds = oldMilliseconds * 0.995 + milliseconds * 0.005;
@@ -1457,19 +1873,33 @@ async function main() {
             document.getElementById("spinner").style.display = "none";
             gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
             gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mainTexture);
+            if (FORMAT === "sg") {
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, texture_sg);
+                gl.activeTexture(gl.TEXTURE2);
+                gl.bindTexture(gl.TEXTURE_2D, texture_index);
+            } else {
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, shTexture);
+            }
+
             gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
         } else {
             gl.clear(gl.COLOR_BUFFER_BIT);
             document.getElementById("spinner").style.display = "";
             start = Date.now() + 2000;
         }
-        const progress = (100 * vertexCount) / (splatData.length / rowLength);
+        const progress = plyExpectedRows
+            ? (100 * plyParsedRows) / plyExpectedRows
+            : (100 * vertexCount) / (splatData.length / rowLength);
         if (progress < 100) {
             document.getElementById("progress").style.width = progress + "%";
         } else {
             document.getElementById("progress").style.display = "none";
         }
-        // fps.innerText = Math.round(avgFps) + " fps | " + smoothFps.toFixed(1) + " fps";
         fps.innerText = smoothFps.toFixed(1) + " fps";
         window.parent?.postMessage(
             {
@@ -1490,11 +1920,21 @@ async function main() {
 
     frame();
 
-    const isPly = (splatData) =>
-        splatData[0] == 112 &&
-        splatData[1] == 108 &&
-        splatData[2] == 121 &&
-        splatData[3] == 10;
+    // Debug/testing handle: lets tests and the console read loader state.
+    window.__viewerState = {
+        format: FORMAT,
+        get expectedRows() { return plyExpectedRows; },
+        get parsedRows() { return plyParsedRows; },
+        get vertices() { return vertexCount; },
+        get contentBytes() { return splatData.length; },
+    };
+
+    const isPly = (data) =>
+        data.length >= 4 &&
+        data[0] == 112 &&
+        data[1] == 108 &&
+        data[2] == 121 &&
+        (data[3] == 10 || data[3] == 13);
 
     const selectFile = (file) => {
         const fr = new FileReader();
@@ -1520,12 +1960,13 @@ async function main() {
                 console.log("Loaded", Math.floor(splatData.length / rowLength));
 
                 if (isPly(splatData)) {
-                    // ply file magic header means it should be handled differently
-                    worker.postMessage({ ply: splatData.buffer, save: true });
+                    worker.postMessage({ plyRaw: splatData.buffer }, [splatData.buffer]);
+                    worker.postMessage({ plyDone: true, save: true });
                 } else {
+                    const completeBytes = Math.floor(splatData.byteLength / rowLength) * rowLength;
                     worker.postMessage({
-                        buffer: splatData.buffer,
-                        vertexCount: Math.floor(splatData.length / rowLength),
+                        buffer: splatData.buffer.slice(0, completeBytes),
+                        vertexCount: Math.floor(completeBytes / rowLength),
                     });
                 }
             };
@@ -1553,35 +1994,53 @@ async function main() {
         selectFile(e.dataTransfer.files[0]);
     });
 
-    let bytesRead = 0;
     let lastVertexCount = -1;
     let stopLoading = false;
+    let firstChunkChecked = false;
+    let isPlyFile = false;
 
     while (true) {
         const { done, value } = await reader.read();
         if (done || stopLoading) break;
 
-        splatData.set(value, bytesRead);
-        bytesRead += value.length;
+        if (!firstChunkChecked) {
+            firstChunkChecked = true;
+            isPlyFile = isPly(value);
+        }
 
-        if (vertexCount > lastVertexCount) {
-            if (!isPly(splatData)) {
-                worker.postMessage({
-                    buffer: splatData.buffer,
-                    vertexCount: Math.floor(bytesRead / rowLength),
-                });
+        if (isPlyFile) {
+            // Stream raw PLY bytes to the worker; it parses rows incrementally.
+            const copy = value.slice().buffer;
+            worker.postMessage({ plyRaw: copy }, [copy]);
+        } else {
+            // .splat layout: feed complete rows as they arrive.
+            if (bytesRead + value.length > splatData.length) {
+                let cap = Math.max(splatData.length * 2, bytesRead + value.length);
+                const bigger = new Uint8Array(cap);
+                bigger.set(splatData.subarray(0, bytesRead), 0);
+                splatData = bigger;
             }
-            lastVertexCount = vertexCount;
+            splatData.set(value, bytesRead);
+            bytesRead += value.length;
+
+            if (vertexCount > lastVertexCount) {
+                const completeBytes = Math.floor(bytesRead / rowLength) * rowLength;
+                worker.postMessage({
+                    buffer: splatData.buffer.slice(0, completeBytes),
+                    vertexCount: Math.floor(completeBytes / rowLength),
+                });
+                lastVertexCount = vertexCount;
+            }
         }
     }
     if (!stopLoading) {
-        if (isPly(splatData)) {
-            // ply file magic header means it should be handled differently
-            worker.postMessage({ ply: splatData.buffer, save: false });
+        if (isPlyFile) {
+            worker.postMessage({ plyDone: true, save: false });
         } else {
+            const completeBytes = Math.floor(bytesRead / rowLength) * rowLength;
             worker.postMessage({
-                buffer: splatData.buffer,
-                vertexCount: Math.floor(bytesRead / rowLength),
+                buffer: splatData.buffer.slice(0, completeBytes),
+                vertexCount: Math.floor(completeBytes / rowLength),
             });
         }
     }
