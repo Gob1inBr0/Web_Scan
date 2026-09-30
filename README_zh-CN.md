@@ -263,9 +263,22 @@ tmc3 --help
 - 同一台 GPU 服务器不要同时提交过多任务，避免显存争抢。
 - 重要结果应从 `web/generated/runs/` 或远程输出目录单独备份。
 
+## 渐进式 Web 服务（WebGS）
+
+除训练之外，控制台已接入自适应服务管线的第一部分：把训练好的 PLY 导出成
+清单 + 可累加分块（`POST /api/export-web` 或 `web/tools/export_web_assets.py`），
+在浏览器里按带宽/视点/GPU 状态渐进加载渲染，并输出 TTFR / 字节 / 帧时间等
+评测遥测。详见 `web/console/README.md`。
+
+公开部署时内置匿名运行遥测：会话/页面访问数、设备分布、服务字节量、响应
+延迟、渐进加载记录（TTFR、调度策略、失败原因）和场景导出结果——不记录 IP、
+原始 User-Agent 和场景文件名。用 `GET /api/telemetry/summary`（需访问令牌）
+拉取汇总作为部署证据；公开部署方式（反向代理、开机自启、遥测开关与保留期）
+见 `web/docs/DEPLOYMENT.md`。
+
 ## 开发与测试
 
-手写测试套件覆盖远程执行、断点续传、流程数据、任务清理和 PLY 加载：
+手写测试套件覆盖远程执行、断点续传、流程数据、任务清理、PLY 加载和遥测：
 
 ```bash
 python3 web/tools/run_tests.py            # 跑全部测试模块

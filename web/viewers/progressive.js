@@ -20,6 +20,8 @@
 // Telemetry: window.__webgsTelemetry() returns the full trace; the HUD and
 // the console both expose it so the paper's experiment harness can pull
 // TTFR, bytes-over-time, chunk arrivals and frame stats per policy.
+// In a deployed setup each load also POSTs one anonymous serving_load event
+// (first render, all-chunks-settled, or failure) to /api/telemetry/event.
 
 import { createWorker } from "./progressive-worker.js";
 
@@ -318,6 +320,7 @@ const telemetry = {
     totalBytes: 0,
     totalRows: 0,
     sceneRows: 0,
+    chunkFailures: 0,
 };
 window.__webgsTelemetry = () => JSON.parse(JSON.stringify(telemetry));
 
@@ -327,6 +330,58 @@ function fmtBytes(b) {
     let i = 0, v = b;
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
     return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+/* ---------- deployment telemetry beacon (serving plan P1) ----------
+ * Reports one anonymous serving_load event to /api/telemetry/event at
+ * first render, when all chunks settle, and on failure. Fire-and-forget:
+ * telemetry problems must never affect the viewer. */
+
+let clientLoadedBeaconed = false;
+let clientFinishedBeaconed = false;
+
+function p95FrameMs() {
+    const sorted = [...telemetry.frameTimes].sort((a, b) => a - b);
+    return sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : null;
+}
+
+function sendLoadBeacon(extra) {
+    const payload = {
+        type: "serving_load",
+        client_id: clientId(),
+        policy: POLICY,
+        ttfr_ms: telemetry.ttfrMs,
+        load_ms: Math.round(performance.now() - telemetry.startedAt),
+        bytes: telemetry.totalBytes,
+        budget_bytes: telemetry.totalBudgetBytes || null,
+        rows: telemetry.totalRows,
+        scene_rows: telemetry.sceneRows,
+        chunks_done: telemetry.chunkEvents.length,
+        chunk_failures: telemetry.chunkFailures,
+        p95_frame_ms: p95FrameMs(),
+        ...extra,
+    };
+    try {
+        fetch("/api/telemetry/event", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            keepalive: true,
+        }).catch(() => {});
+    } catch { /* ignore */ }
+}
+
+function clientId() {
+    try {
+        let id = localStorage.getItem("webgs_client_id");
+        if (!id) {
+            id = crypto.randomUUID().replaceAll("-", "").slice(0, 24);
+            localStorage.setItem("webgs_client_id", id);
+        }
+        return id;
+    } catch {
+        return "anon";
+    }
 }
 
 /* ---------- main ---------- */
@@ -478,6 +533,10 @@ async function main() {
                 firstFrameAt = performance.now() - telemetry.startedAt;
                 telemetry.ttfrMs = Math.round(firstFrameAt);
                 document.getElementById("spinner").style.display = "none";
+                if (!clientLoadedBeaconed) {
+                    clientLoadedBeaconed = true;
+                    sendLoadBeacon({ failed: false, chunks_total: chunkState.length });
+                }
             }
         }
       } catch (err) {
@@ -613,7 +672,13 @@ async function main() {
 
     function schedule() {
         const pending = chunkState.filter((c) => c.status === "pending");
-        if (!pending.length) return;
+        if (!pending.length) {
+            if (!clientFinishedBeaconed && telemetry.chunkEvents.length && queue.size === 0) {
+                clientFinishedBeaconed = true;
+                sendLoadBeacon({ failed: false, chunks_total: chunkState.length });
+            }
+            return;
+        }
         if (POLICY === "full") {
             for (const chunk of pending) startFetch(chunk);
             return;
@@ -662,6 +727,7 @@ async function main() {
             );
         } catch (err) {
             console.error("chunk fetch failed:", chunk.id, err);
+            telemetry.chunkFailures += 1;
             chunk.status = "pending"; // retry on the next scheduling pass
         } finally {
             queue.delete(chunk);
@@ -774,4 +840,10 @@ main().catch((err) => {
     document.getElementById("spinner").style.display = "none";
     document.getElementById("message").innerText = err.toString();
     console.error(err);
+    // Failure-case evidence for the deployment telemetry (P1): which stage
+    // broke, with the viewer's own words as the stage hint. Skip early URL
+    // errors where the load never started (startedAt is still 0).
+    if (telemetry.startedAt > 0) {
+        sendLoadBeacon({ failed: true, fail_stage: String(err && err.message || err).slice(0, 40) });
+    }
 });

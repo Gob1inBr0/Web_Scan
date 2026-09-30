@@ -241,6 +241,7 @@ from web.server.web_security import (
   WORKSPACE_DIR,
   safe_generated_child,
 )
+from web.server.telemetry import classify_user_agent, get_telemetry, sanitize_client_event
 from web.server.web_security import (
   MANUAL_ZH_URL,
   SECURITY_CONFIG_FILE,
@@ -1644,7 +1645,49 @@ def csv_text_response(handler: "ApiHandler", text: str, *, download_name: str) -
 
 class ApiHandler(SimpleHTTPRequestHandler):
   def __init__(self, *args, **kwargs):
+    self._req_start = time.time()
     super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+  # -- operational telemetry (WebGS plan P1) ---------------------------------
+
+  def log_request(self, code="-", size="-"):
+    # Fires for every response — API routes, errors and static assets — so a
+    # single override yields request counts, bytes served, latency and failures.
+    super().log_request(code, size)
+    try:
+      try:
+        status = int(code)
+      except (TypeError, ValueError):
+        status = 0
+      try:
+        body_bytes = int(size)
+      except (TypeError, ValueError):
+        body_bytes = 0
+      get_telemetry().record(
+        "http_request",
+        m=self.command,
+        p=self._telemetry_path_class(urlparse(self.path).path),
+        s=status,
+        ms=int((time.time() - self._req_start) * 1000),
+        b=body_bytes,
+      )
+    except Exception:
+      pass
+
+  @staticmethod
+  def _telemetry_path_class(path: str) -> str:
+    # Buckets, never raw paths: keeps scene file names out of the telemetry.
+    if path.startswith("/api/"):
+      return path
+    if path.startswith("/web/generated/web_exports/"):
+      return "asset:web_export"
+    if path.startswith("/web/viewers/"):
+      return "asset:viewer"
+    if path in ("/", "/index.html", "/console", "/console/") or path.startswith("/web/console"):
+      return "page:index"
+    if path.startswith("/web/"):
+      return "asset:web"
+    return "other"
 
   def translate_path(self, path: str) -> str:
     # Static serving is restricted to WEB_DIR. Both "/x" and legacy "/web/x"
@@ -1666,7 +1709,7 @@ class ApiHandler(SimpleHTTPRequestHandler):
       return True
     if parts[0] in {"server", "tools", "config", "project_md", "_backup"}:
       return True
-    if len(parts) >= 2 and parts[0] == "generated" and parts[1] == "job_logs":
+    if len(parts) >= 2 and parts[0] == "generated" and parts[1] in ("job_logs", "telemetry"):
       return True
     return False
 
@@ -1703,6 +1746,11 @@ class ApiHandler(SimpleHTTPRequestHandler):
 
   def _serve_index_with_token(self) -> None:
     console_entry = self.path.startswith("/web/console") or self.path == "/console"
+    get_telemetry().record(
+      "page_view",
+      page="console" if console_entry else "workbench",
+      client=classify_user_agent(self.headers.get("User-Agent", "")),
+    )
     html_path = WEB_DIR / "console" / "index.html" if console_entry else WEB_DIR / "index.html"
     try:
       html = html_path.read_text(encoding="utf-8")
@@ -1769,6 +1817,11 @@ class ApiHandler(SimpleHTTPRequestHandler):
         "root_dir": str(ROOT_DIR),
         "web_dir": str(WEB_DIR),
       })
+      return
+    if parsed.path == "/api/telemetry/summary":
+      # Operator-only (every /api GET is token-gated): deployment evidence for
+      # the paper — sessions, loads, bytes, latency, failure rates, uptime.
+      json_response(self, {"ok": True, "summary": get_telemetry().summary()})
       return
     if parsed.path == "/api/algorithms":
       algorithms = list_adapters()
@@ -1906,7 +1959,10 @@ class ApiHandler(SimpleHTTPRequestHandler):
 
   def do_POST(self) -> None:
     parsed = urlparse(self.path)
-    if not self._security_gate(require_api_token=True):
+    # The client telemetry beacon carries no token (viewer pages never receive
+    # one); the endpoint itself whitelists and bounds every field instead.
+    allow_no_token = parsed.path == "/api/telemetry/event"
+    if not self._security_gate(require_api_token=not allow_no_token):
       return
     if parsed.path == "/api/shutdown":
       # Console shutdown button: respond first, then exit the process.
@@ -1931,6 +1987,24 @@ class ApiHandler(SimpleHTTPRequestHandler):
         status=400,
         manual_anchor="#9-%E5%B8%B8%E8%A7%81%E9%94%99%E8%AF%AF%E7%A0%81%E4%B8%8E%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88",
       )
+      return
+
+    if parsed.path == "/api/telemetry/event":
+      # Anonymous client beacon (WebGS P1): only whitelisted, bounded fields
+      # are accepted, and invalid payloads still get 200 so beacons never
+      # pollute the failure statistics.
+      store = get_telemetry()
+      parsed_event = sanitize_client_event(payload) if store.enabled else None
+      if parsed_event is None:
+        json_response(self, {"ok": False, "error": "telemetry event rejected"}, status=200)
+        return
+      event_type, fields = parsed_event
+      store.record(
+        event_type,
+        client=classify_user_agent(self.headers.get("User-Agent", "")),
+        **fields,
+      )
+      json_response(self, {"ok": True}, status=200)
       return
 
     if parsed.path == "/api/jobs/analysis/export":
@@ -3170,6 +3244,7 @@ class ApiHandler(SimpleHTTPRequestHandler):
       if not ply_path:
         json_response(self, {"ok": False, "error": "Missing ply_path parameter"}, status=400)
         return
+      export_started = time.time()
       try:
         from web.tools.export_web_assets import export_web_assets
         resolved = Path(ply_path).expanduser().resolve()
@@ -3183,6 +3258,13 @@ class ApiHandler(SimpleHTTPRequestHandler):
         digest = uuid.uuid5(uuid.NAMESPACE_URL, str(resolved)).hex[:10]
         out_dir = WEB_DIR / "generated" / "web_exports" / f"{resolved.stem}-{digest}"
         manifest = export_web_assets(resolved, out_dir)
+        get_telemetry().record(
+          "export_web",
+          ok=True,
+          rows=manifest["vertexCount"],
+          chunks=len(manifest["chunks"]),
+          seconds=round(time.time() - export_started, 3),
+        )
         json_response(self, {
           "ok": True,
           "manifest_url": "/" + str((out_dir / "manifest.json").relative_to(ROOT_DIR)).replace("\\", "/"),
@@ -3194,6 +3276,12 @@ class ApiHandler(SimpleHTTPRequestHandler):
           "output_dir": str(out_dir),
         })
       except Exception as exc:
+        get_telemetry().record(
+          "export_web",
+          ok=False,
+          error=f"{type(exc).__name__}: {exc}",
+          seconds=round(time.time() - export_started, 3),
+        )
         error_response(
           self,
           code="WGSC-EXPORT-WEB-001",
@@ -3264,6 +3352,12 @@ def main() -> None:
     print(f"curl example: curl -H 'X-Auth-Token: {token}' http://{args.host}:{args.port}/api/health")
   else:
     print("WARNING: API token auth is DISABLED (--no-auth). Do not expose this server beyond loopback.")
+  get_telemetry().record(
+    "server_start",
+    host=args.host,
+    port=args.port,
+    auth_enabled=SECURITY_STATE["auth_enabled"],
+  )
   server.serve_forever()
 
 

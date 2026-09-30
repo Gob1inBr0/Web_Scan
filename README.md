@@ -277,9 +277,17 @@ progressively in the browser with bandwidth/viewport/GPU-aware scheduling,
 and collect TTFR / bytes / frame-time telemetry for evaluation. See
 `web/console/README.md`.
 
+For a deployed instance, anonymous operational telemetry is built in:
+session/page-view counts, device mix, bytes served, response latency,
+serving loads (TTFR, policy, failures) and export outcomes — no IPs, raw
+user agents or scene names are stored. Pull the aggregate as deployment
+evidence with the token-gated `GET /api/telemetry/summary`, and see
+`web/docs/DEPLOYMENT.md` for public-deployment setup (reverse proxy,
+service manager, telemetry switches and retention).
+
 ## Development & Testing
 
-The hand-written test suite covers remote execution, download resumption, flow data, job cleanup, and PLY loading:
+The hand-written test suite covers remote execution, download resumption, flow data, job cleanup, PLY loading, and telemetry:
 
 ```bash
 python3 web/tools/run_tests.py            # run all test modules
