@@ -2,6 +2,7 @@
 
 import { store, startPolling, checkHealth, navigate, activeProfile } from "./store.js";
 import { t, toggleLocale } from "./i18n.js";
+import { shutdownServer as shutdownServerApi } from "./api.js";
 import Icon from "./icons.js";
 import { uiComponents } from "./components/ui.js";
 import UiChart from "./components/chart.js";
@@ -45,12 +46,26 @@ const App = {
       return profile ? (profile.label || profile.host || t("nav.noLabel")) : t("nav.noProfile");
     });
     const pageTitle = computed(() => t(PAGE_TITLES[store.route.page] || ""));
+    const serverStopping = Vue.ref(false);
+    async function shutdownServer() {
+      if (!confirm(t("common.shutdownConfirm"))) return;
+      serverStopping.value = true;
+      try {
+        await shutdownServerApi();
+        store.apiOnline = false;
+        toast(t("common.shutdownDone"), "success", 6000);
+      } catch (err) {
+        toast(`${t("common.shutdownFailed")} ${err.message}`, "error");
+      } finally {
+        serverStopping.value = false;
+      }
+    }
     onMounted(() => {
       document.documentElement.lang = store.locale === "zh" ? "zh-CN" : "en";
       startPolling();
       checkHealth();
     });
-    return { store, navigate, NAV, runningCount, profileLabel, pageTitle, t, toggleLocale };
+    return { store, navigate, NAV, runningCount, profileLabel, pageTitle, t, toggleLocale, shutdownServer, serverStopping };
   },
   template: `
     <div class="shell">
@@ -73,9 +88,15 @@ const App = {
           </button>
         </nav>
         <div class="sidebar-footer">
-          <div class="row" style="gap:8px">
-            <span class="dot" :class="{ on: store.apiOnline, off: store.apiOnline === false }"></span>
-            <span class="small muted">{{ store.apiOnline ? t("nav.apiOnline") : store.apiOnline === false ? t("nav.apiOffline") : t("nav.apiChecking") }}</span>
+          <div class="spread">
+            <div class="row" style="gap:8px;min-width:0">
+              <span class="dot" :class="{ on: store.apiOnline, off: store.apiOnline === false }"></span>
+              <span class="small muted ellipsis">{{ store.apiOnline ? t("nav.apiOnline") : store.apiOnline === false ? t("nav.apiOffline") : t("nav.apiChecking") }}</span>
+            </div>
+            <button class="btn btn-ghost btn-sm btn-icon" :title="t('common.shutdownTitle')"
+                    :disabled="serverStopping" @click="shutdownServer">
+              <icon name="stop" style="width:13px;height:13px"></icon>
+            </button>
           </div>
         </div>
       </aside>

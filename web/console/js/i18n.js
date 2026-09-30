@@ -278,6 +278,10 @@ const MESSAGES = {
     "status.postprocFailed": "Postproc failed",
     "common.loading": "Loading…",
     "common.language": "Language",
+    "common.shutdownTitle": "Shut down the WebScan server",
+    "common.shutdownConfirm": "Shut down the WebScan server? Training on the remote GPU machine keeps running, but this web UI and local downloads stop.",
+    "common.shutdownDone": "Server shut down",
+    "common.shutdownFailed": "Shutdown failed:",
   },
 
   zh: {
@@ -554,6 +558,10 @@ const MESSAGES = {
     "status.postprocFailed": "后处理失败",
     "common.loading": "加载中…",
     "common.language": "语言",
+    "common.shutdownTitle": "关闭 WebScan 服务",
+    "common.shutdownConfirm": "确认关闭 WebScan 服务？远程 GPU 上的训练不受影响，但本网页与本地下载将停止。",
+    "common.shutdownDone": "服务已关闭",
+    "common.shutdownFailed": "关闭失败：",
   },
 };
 

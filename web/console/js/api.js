@@ -65,6 +65,7 @@ function withTokenQuery(url) {
 /* ---------- health & algorithms ---------- */
 
 export const getHealth = () => request("/api/health", { timeoutMs: 8000 });
+export const shutdownServer = () => request("/api/shutdown", { method: "POST", body: {}, timeoutMs: 8000 });
 export const getAlgorithms = () => request("/api/algorithms");
 export const environmentCheck = (family) =>
   request("/api/environment-check", { method: "POST", body: { family } });

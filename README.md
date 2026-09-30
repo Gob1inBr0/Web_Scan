@@ -156,6 +156,9 @@ python3.10 -m pip install paramiko numpy
 python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ```
 
+To stop it: run `./stop_webserver.sh`, or click the stop button at the bottom
+of the console sidebar.
+
 ### 3. Open the Web Page
 
 ```text

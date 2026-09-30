@@ -1752,6 +1752,16 @@ class ApiHandler(SimpleHTTPRequestHandler):
                        "/console", "/console/", "/console/index.html"):
       self._serve_index_with_token()
       return
+    if parsed.path == "/api/shutdown":
+      # Token-authenticated (the security gate covers every /api route).
+      # Used by the console's shutdown button; responds first, then exits.
+      json_response(self, {"ok": True, "message": "WebScan server shutting down."})
+      def _shutdown():
+          time.sleep(0.4)
+          LOGGER.info("Shutdown requested via /api/shutdown; exiting.")
+          os._exit(0)
+      threading.Thread(target=_shutdown, daemon=True).start()
+      return
     if parsed.path == "/api/health":
       json_response(self, {
         "ok": True,
@@ -1896,6 +1906,15 @@ class ApiHandler(SimpleHTTPRequestHandler):
   def do_POST(self) -> None:
     parsed = urlparse(self.path)
     if not self._security_gate(require_api_token=True):
+      return
+    if parsed.path == "/api/shutdown":
+      # Console shutdown button: respond first, then exit the process.
+      json_response(self, {"ok": True, "message": "WebScan server shutting down."})
+      def _shutdown():
+          time.sleep(0.4)
+          LOGGER.info("Shutdown requested via /api/shutdown; exiting.")
+          os._exit(0)
+      threading.Thread(target=_shutdown, daemon=True).start()
       return
     length = int(self.headers.get("Content-Length", "0"))
     raw = self.rfile.read(length) if length else b"{}"
@@ -3226,6 +3245,12 @@ def main() -> None:
   SECURITY_STATE["allowed_host_values"] = allowed_host_values(args.host, args.port, extra_hosts)
 
   load_persisted_jobs()
+  pid_file = WEB_DIR / "generated" / "server.pid"
+  try:
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+  except OSError:
+    pass
   server = ThreadingHTTPServer((args.host, args.port), ApiHandler)
   logging.basicConfig(
     level=logging.INFO,

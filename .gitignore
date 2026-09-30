@@ -47,6 +47,7 @@
 /web/test1/
 
 # 忽略本机安全凭据与配置（访问令牌、SSH 主机指纹、安全开关）
+/web/generated/server.pid
 /web/config/server.token
 /web/config/ssh_known_hosts.json
 /web/config/security.json
