@@ -157,7 +157,9 @@ python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ```
 
 To stop it: run `./stop_webserver.sh`, or click the stop button at the bottom
-of the console sidebar.
+of the console sidebar. Next time, start it with `./start_webserver.sh`
+(macOS: double-click `start_webserver.command`); both scripts are
+double-start safe.
 
 ### 3. Open the Web Page
 

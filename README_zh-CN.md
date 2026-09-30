@@ -154,7 +154,7 @@ python3.10 -m pip install paramiko numpy
 python3.10 web/server/api_server.py --host 127.0.0.1 --port 8080
 ```
 
-停止服务：运行 `./stop_webserver.sh`，或点击控制台侧栏底部的关闭按钮。
+停止服务：运行 `./stop_webserver.sh`，或点击控制台侧栏底部的关闭按钮。下次启动直接运行 `./start_webserver.sh`（macOS 可双击 `start_webserver.command`），两个脚本都防重复启动。
 
 ### 3. 打开 Web 页面
 
