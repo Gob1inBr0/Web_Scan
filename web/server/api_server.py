@@ -3143,6 +3143,46 @@ class ApiHandler(SimpleHTTPRequestHandler):
       json_response(self, result, status=status)
       return
 
+    if parsed.path == "/api/export-web":
+      # Module A of the WebGS serving pipeline: convert a local PLY into
+      # progressive Web assets (manifest + base/refinement/region chunks).
+      ply_path = str(payload.get("ply_path", "")).strip()
+      if not ply_path:
+        json_response(self, {"ok": False, "error": "Missing ply_path parameter"}, status=400)
+        return
+      try:
+        from web.tools.export_web_assets import export_web_assets
+        resolved = Path(ply_path).expanduser().resolve()
+        if not result_path_is_allowed(resolved):
+          raise PermissionError(
+            "Path is outside the allowed result roots. Add directories to "
+            "web/config/security.json (extra_allowed_roots) if needed."
+          )
+        if not resolved.is_file() or resolved.suffix.lower() != ".ply":
+          raise ValueError(f"Not a PLY file: {resolved}")
+        digest = uuid.uuid5(uuid.NAMESPACE_URL, str(resolved)).hex[:10]
+        out_dir = WEB_DIR / "generated" / "web_exports" / f"{resolved.stem}-{digest}"
+        manifest = export_web_assets(resolved, out_dir)
+        json_response(self, {
+          "ok": True,
+          "manifest_url": "/" + str((out_dir / "manifest.json").relative_to(ROOT_DIR)).replace("\\", "/"),
+          "viewer_url": f"/web/viewers/progressive.html?url=/{str((out_dir / 'manifest.json').relative_to(ROOT_DIR)).replace(chr(92), '/')}",
+          "vertexCount": manifest["vertexCount"],
+          "baseRows": manifest["baseRows"],
+          "representation": manifest["representation"],
+          "chunkCount": len(manifest["chunks"]),
+          "output_dir": str(out_dir),
+        })
+      except Exception as exc:
+        error_response(
+          self,
+          code="WGSC-EXPORT-WEB-001",
+          step="export_web",
+          message=str(exc),
+          status=400,
+        )
+      return
+
     if parsed.path == "/api/load-ply":
       ply_path = str(payload.get("ply_path", "")).strip()
       representation = str(payload.get("representation", "")).strip() or None

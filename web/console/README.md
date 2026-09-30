@@ -21,6 +21,29 @@ training workflow. Served by the same server as the legacy UI:
 - **3D viewer** — built-in demo scenes plus quick load of local PLYs.
 - **English / 中文** — toggle in the top bar; the choice is remembered.
 
+## Progressive serving (WebGS, WWW Industry Track plan)
+
+The console also carries the first end-to-end slice of the Web serving
+pipeline described in the WebGS optimization plan:
+
+- **Export** — `web/tools/export_web_assets.py` (or `POST /api/export-web`)
+  converts a trained SH PLY into `manifest.json + base.bin + refinement /
+  region chunks` (32-byte splat rows + aligned 48-float SH rows, strictly
+  additive).
+- **Stream** — `3D Viewer → Progressive streaming` plays a manifest in the
+  browser: base layer renders first (TTFR), refinement chunks arrive
+  adaptively and are appended into the WebGPU pipeline incrementally.
+- **Adapt** — six policies are built in for the paper's baselines:
+  `joint | bandwidth | viewport | gpu | naive | full` (the URL parameter
+  `&policy=` switches them). The HUD shows TTFR, downloaded bytes,
+  bandwidth estimate, FPS and P95 frame time.
+- **Telemetry** — `window.__webgsTelemetry()` inside the progressive viewer
+  returns the full trace (TTFR, per-chunk arrivals, bytes/rows-over-time,
+  frame times) for the evaluation harness.
+
+v1 limitation: the chunk format covers SH (standard 3DGS training) PLYs;
+non-SH representations are a documented P2 item.
+
 ## Under the hood
 
 No build step. Vue 3 is vendored at `assets/vue.global.prod.js`; everything

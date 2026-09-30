@@ -263,6 +263,15 @@ Check whether the PLY finished downloading, whether its file size looks sane, an
 - Do not submit too many jobs at once to the same GPU server; VRAM contention degrades all of them.
 - Back up important results separately from `web/generated/runs/` or the remote output directory.
 
+## Progressive Web Serving (WebGS)
+
+Beyond training, the console includes the first slice of the adaptive
+serving pipeline: export a trained PLY into a manifest + additive chunks
+(`POST /api/export-web` or `web/tools/export_web_assets.py`), stream it
+progressively in the browser with bandwidth/viewport/GPU-aware scheduling,
+and collect TTFR / bytes / frame-time telemetry for evaluation. See
+`web/console/README.md`.
+
 ## Development & Testing
 
 The hand-written test suite covers remote execution, download resumption, flow data, job cleanup, and PLY loading:

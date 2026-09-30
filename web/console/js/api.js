@@ -133,3 +133,8 @@ export const loadResult = (path, family = "", representation = "") =>
   request("/api/load-result", { method: "POST", body: { path, family, representation }, timeoutMs: 120000 });
 export const discoverResults = (limit = 40, maxScanDirs = 1800) =>
   request(`/api/results/discover?limit=${limit}&max_scan_dirs=${maxScanDirs}`, { timeoutMs: 120000 });
+
+/* ---------- Web serving export (WebGS progressive pipeline) ---------- */
+
+export const exportWeb = (plyPath) =>
+  request("/api/export-web", { method: "POST", body: { ply_path: plyPath }, timeoutMs: 300000 });
