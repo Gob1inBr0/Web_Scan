@@ -159,6 +159,10 @@ export default {
               <ui-field :label="$t('set.workspaceRoot')" :hint="$t('set.workspaceHint')"><input class="input mono" v-model="editing.workspace_root" /></ui-field>
               <ui-field :label="$t('set.outputRoot')" :hint="$t('set.outputHint')"><input class="input mono" v-model="editing.output_root" /></ui-field>
             </div>
+            <ui-field :label="$t('set.keyPath')" :hint="$t('set.keyPathHint')"
+                      style="margin-bottom:12px">
+              <input class="input mono" v-model="editing.key_path" placeholder="~/.ssh/id_ed25519" />
+            </ui-field>
             <ui-field :label="$t('set.activateCmd')" :hint="$t('set.activateHint')"
                       style="margin-bottom:14px">
               <input class="input mono" v-model="editing.activate_cmd" placeholder="source … && conda activate env" />

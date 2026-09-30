@@ -1321,6 +1321,7 @@ def extract_remote_config_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     "port": remote_payload.get("port", payload.get("remote_port", 22)),
     "username": remote_payload.get("username", payload.get("remote_username", "")),
     "password": remote_payload.get("password", payload.get("remote_password", "")),
+    "key_path": remote_payload.get("key_path", payload.get("remote_key_path", "")),
     "repo_path": remote_payload.get("repo_path", payload.get("remote_repo_path", "")),
     "workspace_root": remote_payload.get("workspace_root", payload.get("remote_workspace_root", "")),
     "output_root": remote_payload.get("output_root", payload.get("remote_output_root", "")),

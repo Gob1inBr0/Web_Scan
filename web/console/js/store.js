@@ -121,6 +121,7 @@ export function defaultProfile() {
     output_root: "/tmp/web_scan/outputs",
     python: "python3",
     activate_cmd: "",
+    key_path: "",
   };
 }
 
@@ -137,6 +138,7 @@ export function remoteConfig() {
     port: Number(profile.port) || 22,
     username: profile.username,
     password: sessionPasswords.get(profile.id),
+    key_path: String(profile.key_path || "").trim(),
     repo_path: profile.repo_path,
     workspace_root: profile.workspace_root,
     output_root: profile.output_root,
@@ -145,9 +147,10 @@ export function remoteConfig() {
   };
 }
 
+/** Auth ready: a session password OR a configured private key path. */
 export function hasPassword() {
   const profile = activeProfile();
-  return Boolean(profile && sessionPasswords.get(profile.id));
+  return Boolean(profile && (sessionPasswords.get(profile.id) || String(profile.key_path || "").trim()));
 }
 
 /* ---------- routing ---------- */

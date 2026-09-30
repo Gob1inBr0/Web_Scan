@@ -228,6 +228,23 @@ def _host_key_policy(paramiko, host: str, port: int):
   return _TofuHostKeyPolicy()
 
 
+def _connect_kwargs(validated: Dict[str, Any]) -> Dict[str, Any]:
+  """Auth kwargs for client.connect(): private key file when configured,
+  otherwise password. The key file may be protected by a passphrase, which
+  reuses the password field when present."""
+  kwargs: Dict[str, Any] = {
+    "look_for_keys": False,
+    "allow_agent": False,
+  }
+  if validated.get("key_path"):
+    kwargs["key_filename"] = validated["key_path"]
+    if validated.get("password"):
+      kwargs["passphrase"] = validated["password"]
+  elif validated.get("password"):
+    kwargs["password"] = validated["password"]
+  return kwargs
+
+
 def _new_ssh_client(validated: Dict[str, Any]):
   """Create an SSHClient with the trust-on-first-use host key policy applied."""
   paramiko = _load_paramiko()
@@ -263,13 +280,29 @@ def validate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
   host = str(config.get("host", "")).strip()
   username = str(config.get("username", "")).strip()
   password = str(config.get("password", ""))
+  key_path = str(config.get("key_path", "")).strip()
 
   if not host:
     raise RemoteExecutionError("remote.host is required", code_hint="WGSC-STEP4-CONFIG-001", stage="config")
   if not username:
     raise RemoteExecutionError("remote.username is required", code_hint="WGSC-STEP4-CONFIG-001", stage="config")
-  if not password:
-    raise RemoteExecutionError("remote.password is required", code_hint="WGSC-STEP4-CONFIG-001", stage="config")
+  # Auth: a private key file or a password — at least one is required.
+  remote_key_path = ""
+  if key_path:
+    expanded = Path(key_path).expanduser().resolve()
+    if not expanded.is_file():
+      raise RemoteExecutionError(
+        f"remote.key_path does not exist: {expanded}",
+        code_hint="WGSC-STEP4-CONFIG-001",
+        stage="config",
+      )
+    remote_key_path = str(expanded)
+  if not password and not remote_key_path:
+    raise RemoteExecutionError(
+      "remote.password or remote.key_path is required (key or password auth)",
+      code_hint="WGSC-STEP4-CONFIG-001",
+      stage="config",
+    )
 
   try:
     port = int(config.get("port", 22))
@@ -298,6 +331,7 @@ def validate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
     "port": port,
     "username": username,
     "password": password,
+    "key_path": remote_key_path,
     "repo_path": remote_repo_path,
     "workspace_root": remote_workspace_root,
     "output_root": remote_output_root,
@@ -525,10 +559,8 @@ def remote_preflight_check(
         hostname=validated["host"],
         port=validated["port"],
         username=validated["username"],
-        password=validated["password"],
+        **_connect_kwargs(validated),
         timeout=timeout_seconds,
-        look_for_keys=False,
-        allow_agent=False,
       )
       checks.append({
         "name": "ssh_connect",
@@ -671,6 +703,7 @@ def sanitize_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
     "python": str(config.get("python", "python3") or "python3"),
     "activate_cmd": str(config.get("activate_cmd", "")),
     "has_password": bool(config.get("password")),
+    "key_path": str(config.get("key_path", "")),
   }
 
 
@@ -1366,10 +1399,8 @@ def check_remote_output_download(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
     sftp = client.open_sftp()
     marker = _verify_or_recover_remote_result_marker(
@@ -1405,10 +1436,8 @@ def download_remote_output_directory(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
     sftp = client.open_sftp()
     marker = _verify_or_recover_remote_result_marker(
@@ -2896,10 +2925,8 @@ def start_remote_algorithm_detached(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
 
     sftp = client.open_sftp()
@@ -3047,10 +3074,8 @@ def poll_remote_detached_job(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
     sftp = client.open_sftp()
     status_read_error: Exception | None = None
@@ -3303,10 +3328,8 @@ def cancel_remote_detached_job(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
     sftp = client.open_sftp()
     resolved_pid = str(remote_pid or "").strip() or _read_remote_text_file(sftp, remote_job_paths["pid_file"]).strip()
@@ -3515,10 +3538,8 @@ def repair_remote_job_metrics(
       hostname=validated["host"],
       port=validated["port"],
       username=validated["username"],
-      password=validated["password"],
+      **_connect_kwargs(validated),
       timeout=20,
-      look_for_keys=False,
-      allow_agent=False,
     )
     sftp = client.open_sftp()
     _write_remote_text(sftp, repair_script_path, script)
