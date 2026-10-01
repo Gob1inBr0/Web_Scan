@@ -5,17 +5,9 @@
       "repo_path": "C:\\Users\\chen\\Documents\\3DGS\\Web_Scan\\gaussian-splatting-lightning-main",
       "default_cwd": "C:\\Users\\chen\\Documents\\3DGS\\Web_Scan\\gaussian-splatting-lightning-main"
     },
-    "vanilla-3dgs": {
-      "repo_path": "",
-      "default_cwd": ""
-    },
     "hac-plus-plus": {
       "repo_path": "../HAC-plus-main",
       "default_cwd": "../HAC-plus-main"
-    },
-    "hac": {
-      "repo_path": "",
-      "default_cwd": ""
     }
   }
 }

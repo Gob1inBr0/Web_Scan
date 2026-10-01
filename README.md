@@ -51,6 +51,19 @@ Screenshots are located in [`web照片/`](web照片/).
 | **reduced-3dgs** | Reduced VRAM and storage footprint | `reduced-3dgs-main/setup_env.sh` |
 | **AtomGS** | Atomized Gaussian representation | `AtomGS-main/setup_env.sh` |
 | **FCGS** | Feature-compressed Gaussian bitstream pipeline (train via CompGS wrapper; encode/decode) | `FCGS-main/` (see `web/project_md/fcgs/`) |
+| **3DGS (30K baseline)** | Original graphdeco 3DGS, the 30K-iteration baseline used by compression papers | `gaussian-splatting-main/setup_env.sh` |
+| **HAC** | Hash-grid anchored compression (evaluates during training) | `HAC-main/setup_env.sh` |
+| **Taming3DGS** | High quality with limited resources via gaussian budgeting | `taming-3dgs-main/setup_env.sh` |
+| **Octree-GS** | LOD (level-of-detail) anchored rendering | `Octree-GS-main/setup_env.sh` |
+| **LightGaussian** | Prune + finetune of a trained 3DGS checkpoint | `LightGaussian-main/setup_env.sh` |
+| **Mini-Splatting** | Constrained densification for compact scenes | `Mini-Splatting-main/setup_env.sh` |
+| **EAGLES** | Efficient quantized 3DGS (train + eval in one run) | `EAGLES-main/setup_env.sh` |
+| **GaussianSpa** | Optimizing-sparsifying simplification | `GaussianSpa-main/setup_env.sh` |
+| **RDO-Gaussian** | End-to-end rate–distortion optimized training with vector quantization | `RDO-Gaussian-main/setup_env.sh` |
+| **SOG (Self-Organizing Gaussians)** | Grid sorting + compression in-run (hydra CLI) | `Self-Organizing-Gaussians-main/setup_env.sh` |
+| **c3dgs (Compressed 3DGS)** | Post-training encoder: sensitivity-aware vector clustering of a trained model | `c3dgs-main/setup_env.sh` |
+
+Survey entries verified to have **no public code** (kept as disabled placeholders with notes): HEMGS, MesonGS, CodecGS (repo exists but "code will be released" only), Color-cued GS, Compact3D-VQ, and others — see the notes field of `web/config/algorithm_adapters.json`.
 
 ## Project Structure
 
@@ -135,6 +148,31 @@ bash MEGS-2-main/setup_env.sh
 bash reduced-3dgs-main/setup_env.sh
 bash AtomGS-main/setup_env.sh
 ```
+
+The survey algorithms (added 2026-10) follow the same pattern:
+
+```bash
+bash gaussian-splatting-main/setup_env.sh     # 3DGS 30K baseline
+bash HAC-main/setup_env.sh
+bash taming-3dgs-main/setup_env.sh
+bash Octree-GS-main/setup_env.sh
+bash LightGaussian-main/setup_env.sh
+bash Mini-Splatting-main/setup_env.sh
+bash EAGLES-main/setup_env.sh
+bash GaussianSpa-main/setup_env.sh
+bash RDO-Gaussian-main/setup_env.sh
+bash Self-Organizing-Gaussians-main/setup_env.sh   # SOG
+bash c3dgs-main/setup_env.sh                  # Compressed 3DGS encoder
+```
+
+On the training server, place each algorithm directory next to the web app root (same layout as this repository) and fill the connection profile's `repo_path` with that server-side directory. Notes per algorithm:
+
+- **HAC** evaluates held-out views during training; there is no separate render/metrics step.
+- **LightGaussian** trains from a checkpoint: fill "Checkpoint" in the wizard with a trained 3DGS `chkpnt30000.pth`.
+- **Mini-Splatting** requires `--imp_metric` (template uses `outdoor`; switch to `indoor` for indoor scenes).
+- **EAGLES** runs `train_eval.py` — training and evaluation happen in one command.
+- **SOG** uses a hydra CLI; the adapter overrides `dataset.source_path` and `optimization.iterations` on the command line.
+- **c3dgs** is a post-training encoder: pick "Compress a trained model" in the wizard and point it at a trained model directory (containing `cfg_args`).
 
 The scripts expect a working Conda or Mamba installation. If Conda is not loaded automatically on the server, run a command such as:
 

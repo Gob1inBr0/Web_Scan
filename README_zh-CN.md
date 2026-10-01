@@ -49,6 +49,19 @@
 | **reduced-3dgs** | 降低显存和存储占用 | `reduced-3dgs-main/setup_env.sh` |
 | **AtomGS** | 原子化 Gaussian 表示 | `AtomGS-main/setup_env.sh` |
 | **FCGS** | 特征压缩码流管线（经 CompGS 包装器训练，含编解码） | `FCGS-main/`（见 `web/project_md/fcgs/`） |
+| **3DGS（30K 基线）** | graphdeco 原版 3DGS，压缩论文常用的 30K 迭代基线 | `gaussian-splatting-main/setup_env.sh` |
+| **HAC** | 哈希网格锚点压缩（训练中完成评估） | `HAC-main/setup_env.sh` |
+| **Taming3DGS** | 高斯预算约束下的高质量紧凑表示 | `taming-3dgs-main/setup_env.sh` |
+| **Octree-GS** | 锚点 LOD（细节层次）表示 | `Octree-GS-main/setup_env.sh` |
+| **LightGaussian** | 对已训练 3DGS 检查点做剪枝 + 恢复微调 | `LightGaussian-main/setup_env.sh` |
+| **Mini-Splatting** | 受限致密化的紧凑表示 | `Mini-Splatting-main/setup_env.sh` |
+| **EAGLES** | 高效量化 3DGS（训练和评估一条命令完成） | `EAGLES-main/setup_env.sh` |
+| **GaussianSpa** | "优化-稀疏化"交替的简化框架 | `GaussianSpa-main/setup_env.sh` |
+| **RDO-Gaussian** | 端到端率失真优化训练，训练中完成向量量化 | `RDO-Gaussian-main/setup_env.sh` |
+| **SOG（自组织高斯）** | 训练中完成网格排序与压缩（hydra 命令行） | `Self-Organizing-Gaussians-main/setup_env.sh` |
+| **c3dgs（Compressed 3DGS）** | 后处理编码器：对已训练模型做敏感度感知的矢量聚类量化 | `c3dgs-main/setup_env.sh` |
+
+经核实**暂无公开代码**的 survey 条目（在适配器中以禁用占位 + 备注保留）：HEMGS、MesonGS、CodecGS（仓库存在但仅有 "Code will be released"）、Color-cued GS、Compact3D-VQ 等，详见 `web/config/algorithm_adapters.json` 的 notes 字段。
 
 ## 项目结构
 
@@ -133,6 +146,31 @@ bash MEGS-2-main/setup_env.sh
 bash reduced-3dgs-main/setup_env.sh
 bash AtomGS-main/setup_env.sh
 ```
+
+2026-10 接入的 survey 算法同样方式：
+
+```bash
+bash gaussian-splatting-main/setup_env.sh     # 3DGS 30K 基线
+bash HAC-main/setup_env.sh
+bash taming-3dgs-main/setup_env.sh
+bash Octree-GS-main/setup_env.sh
+bash LightGaussian-main/setup_env.sh
+bash Mini-Splatting-main/setup_env.sh
+bash EAGLES-main/setup_env.sh
+bash GaussianSpa-main/setup_env.sh
+bash RDO-Gaussian-main/setup_env.sh
+bash Self-Organizing-Gaussians-main/setup_env.sh   # SOG
+bash c3dgs-main/setup_env.sh                  # Compressed 3DGS 编码器
+```
+
+在训练服务器上，把各算法目录放在 web 应用根目录旁边（与本仓库布局一致），并在连接档案的 `repo_path` 里填写服务器上的对应目录。各算法注意事项：
+
+- **HAC** 训练过程中即完成测试视角评估，没有单独的 render/metrics 步骤。
+- **LightGaussian** 从检查点开始训练：向导的"检查点"一栏填已训练 3DGS 的 `chkpnt30000.pth`。
+- **Mini-Splatting** 必须传 `--imp_metric`（模板默认 `outdoor`，室内场景改为 `indoor`）。
+- **EAGLES** 用 `train_eval.py` 一条命令完成训练和评估。
+- **SOG** 使用 hydra 命令行，适配器通过命令行覆盖 `dataset.source_path` 和 `optimization.iterations`。
+- **c3dgs** 是后处理编码器：在向导选择"压缩已训练模型"，填服务器上包含 `cfg_args` 的已训练模型目录。
 
 脚本默认需要可用的 Conda 或 Mamba。若服务器没有自动加载 Conda，请先执行类似命令：
 

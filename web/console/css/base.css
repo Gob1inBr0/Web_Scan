@@ -82,6 +82,7 @@ code, pre { font-family: var(--font-mono); }
 
 .muted { color: var(--text-2); }
 .faint { color: var(--text-3); }
+.warn-text { color: var(--warning); }
 .small { font-size: var(--fs-sm); }
 .mono  { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .nowrap { white-space: nowrap; }

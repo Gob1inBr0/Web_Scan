@@ -3,25 +3,53 @@
   "adapters": [
     {
       "family": "vanilla-3dgs",
-      "label": "Vanilla 3DGS",
+      "label": "3DGS (30K baseline)",
       "category": "baseline",
       "representation": "sh",
       "compatibility": "viewer-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../gaussian-splatting-main",
+      "repo_url": "https://github.com/graphdeco-inria/gaussian-splatting",
+      "default_cwd": "../gaussian-splatting-main",
       "operations": {
         "train": {
-          "enabled": false,
-          "template": ""
+          "enabled": true,
+          "template": "python train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir} --skip_train"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
         },
         "export_scene": {
           "enabled": true,
           "input_kind": "ply"
         }
       },
-      "notes": ""
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n gaussian_splatting python=3.10 pip",
+            "conda activate gaussian_splatting",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm tensorboard",
+            "python -m pip install lpips opencv-python matplotlib imageio",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/simple-knn"
+          ]
+        }
+      },
+      "notes": "Original graphdeco 3DGS, the 30K-iteration baseline used by compression papers."
     },
     {
       "family": "gaussian-splatting-lightning",
@@ -169,14 +197,44 @@
       "category": "compaction",
       "representation": "sh",
       "compatibility": "viewer-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../GaussianSpa-main",
+      "repo_url": "https://github.com/noodle-lab/GaussianSpa",
+      "default_cwd": "../GaussianSpa-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "diff_gaussian_rasterization_ms",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n gaussian_spa python=3.10 pip",
+            "conda activate gaussian_spa",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/diff-gaussian-rasterization_ms submodules/simple-knn"
+          ]
+        }
+      },
       "operations": {
         "train": {
           "enabled": true,
-          "template": "python train.py -s {workspace} -m {output_dir}"
+          "template": "python train_op.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
         },
         "process_frame": {
           "enabled": true,
@@ -187,7 +245,7 @@
           "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "train_op.py applies optimizing-sparsifying to vanilla 3DGS (opacity criterion); the Mini-Splatting variants are train_opacity.sh / train_imp_score.sh."
     },
     {
       "family": "scaffold-gs",
@@ -285,14 +343,39 @@
       "category": "compression",
       "representation": "compressed-anchor",
       "compatibility": "manifest-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../HAC-main",
+      "repo_url": "https://github.com/YihangChen-ee/HAC",
+      "default_cwd": "../HAC-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "_gridencoder",
+          "arithmetic",
+          "torch_scatter",
+          "lpips",
+          "plyfile",
+          "einops",
+          "cv2"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n HAC_env python=3.10 pip",
+            "conda activate HAC_env",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* scipy pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install einops wandb==0.16.4 lpips colorama opencv-python imageio matplotlib",
+            "python -m pip install torch-scatter -f https://data.pyg.org/whl/torch-2.2.0+cu121.html",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/arithmetic submodules/diff-gaussian-rasterization submodules/simple-knn submodules/gridencoder"
+          ]
+        }
+      },
       "operations": {
-        "compress": {
+        "train": {
           "enabled": true,
-          "template": "python compress.py --input {input_path} --output {output_dir}"
+          "template": "python train.py -s {workspace} --eval -m {output_dir} --iterations {iterations} --voxel_size {voxel_size} --update_init_factor {update_init_factor} --lmbda {lmbda} --lod 0"
         },
         "process_frame": {
           "enabled": false,
@@ -303,7 +386,7 @@
           "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "HAC evaluates during training (no separate render.py/metrics.py); lambda 0.0005-0.004 gives 25x-80x compression."
     },
     {
       "family": "hemgs",
@@ -317,11 +400,11 @@
       "default_cwd": "",
       "operations": {
         "compress": {
-          "enabled": true,
-          "template": "python compress.py --input {input_path} --output {output_dir}"
+          "enabled": false,
+          "template": ""
         }
       },
-      "notes": ""
+      "notes": "No public code found (verified 2026-10 via GitHub search); placeholder kept for documentation only."
     },
     {
       "family": "hac-plus-plus",
@@ -442,19 +525,19 @@
       "compatibility": "manifest-ready",
       "repo_type": "external",
       "repo_path": "",
-      "repo_url": "",
+      "repo_url": "https://github.com/fraunhoferhhi/CodecGS",
       "default_cwd": "",
       "operations": {
         "encode": {
-          "enabled": true,
-          "template": "python encode.py --input {input_path} --output {output_dir}"
+          "enabled": false,
+          "template": ""
         },
         "decode": {
-          "enabled": true,
-          "template": "python decode.py --input {input_path} --output {output_dir}"
+          "enabled": false,
+          "template": ""
         }
       },
-      "notes": ""
+      "notes": "Repository exists but contains no code yet (README: 'Code will be released'; verified 2026-10). Will be wired up once the authors publish."
     },
     {
       "family": "fcgs",
@@ -546,39 +629,106 @@
       "category": "compression",
       "representation": "compressed-sh",
       "compatibility": "manifest-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../RDO-Gaussian-main",
+      "repo_url": "https://github.com/USTC-IMCL/RDO-Gaussian",
+      "default_cwd": "../RDO-Gaussian-main",
       "operations": {
         "train": {
           "enabled": true,
-          "template": "python train.py --input {workspace} --output {output_dir}"
+          "template": "python train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir} -s {workspace} --skip_train"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "Rate control via sh_mask_lambda/gs_mask_lambda (defaults 0.005/0.0005 = mid rate point of run_real_world.sh); vector quantization runs during training.",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n rdo-gaussian python=3.10 pip",
+            "conda activate rdo-gaussian",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/imcl-compression submodules/simple-knn"
+          ]
+        }
+      }
     },
     {
       "family": "compressed-3dgs",
-      "label": "Compressed 3DGS",
+      "label": "Compressed 3DGS (c3dgs)",
       "category": "compression",
       "representation": "compressed-sh",
       "compatibility": "manifest-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../c3dgs-main",
+      "repo_url": "https://github.com/KeKsBoTer/c3dgs",
+      "default_cwd": "../c3dgs-main",
       "operations": {
         "compress": {
           "enabled": true,
-          "template": "python compress.py --input {input_path} --output {output_dir}"
+          "template": "python compress.py -m {input_path} --data_device cuda --output_vq {output_dir}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
         },
         "decompress": {
           "enabled": true,
-          "template": "python decompress.py --input {input_path} --output {output_dir}"
+          "template": "python npz2ply.py {input_path} --ply_file {output_dir}/point_cloud.ply"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "Post-training encoder: input is a trained 3DGS model directory (with cfg_args); compress.py reports PSNR/SSIM/LPIPS itself and writes results.json. npz2ply.py converts compressed .npz back to .ply.",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips",
+          "weighted_distance"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n c3dgs python=3.10 pip",
+            "conda activate c3dgs",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/weighted_distance"
+          ]
+        }
+      }
     },
     {
       "family": "mesongs",
@@ -592,11 +742,11 @@
       "default_cwd": "",
       "operations": {
         "compress": {
-          "enabled": true,
-          "template": "python compress.py --input {input_path} --output {output_dir}"
+          "enabled": false,
+          "template": ""
         }
       },
-      "notes": ""
+      "notes": "No public code found (verified 2026-10 via GitHub search); placeholder kept for documentation only."
     },
     {
       "family": "octree-gs",
@@ -604,17 +754,50 @@
       "category": "lod",
       "representation": "compressed-anchor",
       "compatibility": "manifest-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../Octree-GS-main",
+      "repo_url": "https://github.com/city-super/Octree-GS",
+      "default_cwd": "../Octree-GS-main",
       "operations": {
         "train": {
           "enabled": true,
-          "template": "python train.py --source {workspace} --output {output_dir}"
+          "template": "python train.py --eval -s {workspace} -m {output_dir} --iterations {iterations}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "Scaffold-GS based LOD training; single_train.sh wraps the same train.py flags (fork/base_layer defaults are fine for standard runs).",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n octree-gs python=3.10 pip",
+            "conda activate octree-gs",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/simple-knn"
+          ]
+        }
+      }
     },
     {
       "family": "gaussianpro",
@@ -724,21 +907,263 @@
       "category": "compaction",
       "representation": "sh",
       "compatibility": "viewer-ready",
-      "repo_type": "external",
-      "repo_path": "",
-      "repo_url": "",
-      "default_cwd": "",
+      "repo_type": "local",
+      "repo_path": "../taming-3dgs-main",
+      "repo_url": "https://github.com/humansensinglab/taming-3dgs",
+      "default_cwd": "../taming-3dgs-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "fused_ssim",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "websockets",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n taming_3dgs python=3.10 pip",
+            "conda activate taming_3dgs",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install websockets lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/simple-knn submodules/fused-ssim"
+          ]
+        }
+      },
       "operations": {
         "train": {
           "enabled": true,
-          "template": "python train.py --source {workspace} --output {output_dir}"
+          "template": "python train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "process_frame": {
+          "enabled": true,
+          "template": "python ../web/tools/realtime_adapter_bridge.py --adapter taming3dgs --representation sh --mode copy-and-scene --input {input_path} --output-dir {output_dir} --repo-path {repo_path}"
         },
         "export_scene": {
           "enabled": true,
           "input_kind": "ply"
         }
       },
-      "notes": ""
+      "notes": "Repo moved from autonomousvision to humansensinglab (2026-10); gaussian budget defaults to 20 (--budget flag)."
+    },
+    {
+      "family": "sog",
+      "label": "Self-Organizing Gaussians",
+      "category": "compression",
+      "representation": "compressed-grid",
+      "compatibility": "manifest-ready",
+      "repo_type": "local",
+      "repo_path": "../Self-Organizing-Gaussians-main",
+      "repo_url": "https://github.com/fraunhoferhhi/Self-Organizing-Gaussians",
+      "default_cwd": "../Self-Organizing-Gaussians-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plas",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "scipy",
+          "imagecodecs",
+          "hydra",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n sogs python=3.10 pip",
+            "conda activate sogs",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* scipy pillow=10.* plyfile=1.1.* tqdm screeninfo",
+            "python -m pip install hydra-core lpips opencv-python imageio matplotlib \"imagecodecs[all]==2023.9.18\" wandb",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/simple-knn submodules/PLAS"
+          ]
+        }
+      },
+      "operations": {
+        "train": {
+          "enabled": true,
+          "template": "python train.py --config-name ours_q_sh_local_test hydra.run.dir={output_dir} dataset.source_path={workspace} optimization.iterations={iterations} run.no_progress_bar=false"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
+        }
+      },
+      "notes": "Hydra CLI: overrides are key=value pairs. Training sorts Gaussians onto a grid and compresses in-run; compressed artifacts land under {output_dir}/compression/."
+    },
+    {
+      "family": "lightgaussian",
+      "label": "LightGaussian",
+      "category": "compaction",
+      "representation": "sh",
+      "compatibility": "viewer-ready",
+      "repo_type": "local",
+      "repo_path": "../LightGaussian-main",
+      "repo_url": "https://github.com/VITA-Group/LightGaussian",
+      "default_cwd": "../LightGaussian-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n lightgaussian python=3.10 pip",
+            "conda activate lightgaussian",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/compress-diff-gaussian-rasterization submodules/simple-knn"
+          ]
+        }
+      },
+      "operations": {
+        "train": {
+          "enabled": true,
+          "template": "python prune_finetune.py -s {workspace} -m {output_dir} --eval --start_checkpoint {checkpoint_path}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir} --skip_train"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
+        }
+      },
+      "notes": "Entry point is prune_finetune.py: fill 'checkpoint' with a trained 3DGS chkpnt30000.pth; it prunes (default 90% importance-score) and finetunes to 35k iterations. Full pipeline stages (distill/vectree quant) are separate scripts."
+    },
+    {
+      "family": "mini-splatting",
+      "label": "Mini-Splatting",
+      "category": "compaction",
+      "representation": "sh",
+      "compatibility": "viewer-ready",
+      "repo_type": "local",
+      "repo_path": "../Mini-Splatting-main",
+      "repo_url": "https://github.com/fatPeter/mini-splatting",
+      "default_cwd": "../Mini-Splatting-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "diff_gaussian_rasterization_ms",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n mini_splatting python=3.10 pip",
+            "conda activate mini_splatting",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/diff-gaussian-rasterization_ms submodules/simple-knn"
+          ]
+        }
+      },
+      "operations": {
+        "train": {
+          "enabled": true,
+          "template": "python ms/train.py -s {workspace} -m {output_dir} --eval --imp_metric outdoor"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python render.py -m {output_dir}"
+        },
+        "metrics": {
+          "enabled": true,
+          "template": "python metrics.py -m {output_dir}"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
+        }
+      },
+      "notes": "--imp_metric is required by the repo CLI: outdoor suits Mip-NeRF 360 outdoor / Tanks&Temples scenes, indoor for indoor scenes. ms_c / ms_d variants live in ms_c/ and ms_d/."
+    },
+    {
+      "family": "eagles",
+      "label": "EAGLES",
+      "category": "compression",
+      "representation": "sh",
+      "compatibility": "viewer-ready",
+      "repo_type": "local",
+      "repo_path": "../EAGLES-main",
+      "repo_url": "https://github.com/Sharath-girish/efficientgaussian",
+      "default_cwd": "../EAGLES-main",
+      "requirements": {
+        "python_modules": [
+          "torch",
+          "torchvision",
+          "diff_gaussian_rasterization",
+          "diff_gaussian_rasterization_depth",
+          "simple_knn",
+          "plyfile",
+          "PIL",
+          "tqdm",
+          "lpips",
+          "yaml"
+        ],
+        "install_commands": {
+          "cuda121": [
+            "conda create -y -n gaussian_splatting python=3.10 pip",
+            "conda activate gaussian_splatting",
+            "conda install -y -c pytorch -c nvidia -c conda-forge pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 numpy=1.26.* pillow=10.* plyfile=1.1.* tqdm",
+            "python -m pip install lpips opencv-python imageio matplotlib pyyaml",
+            "TORCH_CUDA_ARCH_LIST=8.9 CUDA_HOME=/usr/local/cuda-12.1 python -m pip install --no-build-isolation submodules/diff-gaussian-rasterization submodules/diff-gaussian-rasterization-depth submodules/simple-knn"
+          ]
+        }
+      },
+      "operations": {
+        "train": {
+          "enabled": true,
+          "template": "python train_eval.py --config configs/efficient-3dgs.yaml -s {workspace} -m {output_dir}"
+        },
+        "render": {
+          "enabled": true,
+          "template": "python train_eval.py --config configs/efficient-3dgs.yaml -s {workspace} -m {output_dir} --skip_train"
+        },
+        "export_scene": {
+          "enabled": true,
+          "input_kind": "ply"
+        }
+      },
+      "notes": "train_eval.py trains and evaluates in one run (metrics printed at the end; no separate metrics.py step). Repo name on GitHub is efficientgaussian."
     }
   ]
 }

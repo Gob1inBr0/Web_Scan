@@ -58,6 +58,19 @@ def supported_operations(adapter: Dict[str, Any]) -> List[str]:
   ]
 
 
+# Operations that run algorithm code on the training server; they need a repo_path
+# (where the administrator placed the source) to produce a runnable command.
+REMOTE_EXECUTION_OPERATIONS = {
+  "train",
+  "render",
+  "metrics",
+  "compress",
+  "decompress",
+  "encode",
+  "decode",
+}
+
+
 def validate_adapter(adapter: Dict[str, Any]) -> Dict[str, Any]:
   repo_path = adapter.get("repo_path", "")
   default_cwd = adapter.get("default_cwd", "")
@@ -75,6 +88,13 @@ def validate_adapter(adapter: Dict[str, Any]) -> Dict[str, Any]:
     warnings.append("Configured repo_path does not exist on this machine.")
   if default_cwd and not cwd_exists:
     warnings.append("Configured default_cwd does not exist on this machine.")
+  remote_execution_ops = [name for name in operations if name in REMOTE_EXECUTION_OPERATIONS]
+  missing_repo = bool(remote_execution_ops) and not repo_path
+  if missing_repo:
+    warnings.append(
+      "Remote execution operations enabled but repo_path is empty; "
+      "runs would fail. Fill repo_path with the server-side source path first."
+    )
   return {
     "family": adapter["family"],
     "repo_path": repo_path,
@@ -85,8 +105,9 @@ def validate_adapter(adapter: Dict[str, Any]) -> Dict[str, Any]:
     "operations": operations,
     "runnable_operations": runnable_operations,
     "warnings": warnings,
-    # Capability-first readiness: adapter is usable if it exposes at least one enabled operation.
-    "is_ready": bool(operations),
+    # Capability-first readiness: adapter is usable if it exposes at least one enabled
+    # operation, AND that operation can actually run (execution ops need a repo_path).
+    "is_ready": bool(operations) and not missing_repo,
   }
 
 

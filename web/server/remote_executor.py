@@ -81,6 +81,66 @@ ALGORITHM_EVAL_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
     "cli_supports_eval": False,
     "reason": "FCGS trains through the CompGS pipeline wrapper (run_fcgs_compgs_pipeline.py), not a train.py --eval flag",
   },
+  "vanilla-3dgs": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "original 3DGS train.py: --eval holds out test views for render.py/metrics.py",
+  },
+  "hac": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "HAC train.py evaluates held-out views during training (no separate metrics script)",
+  },
+  "taming3dgs": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "Taming3DGS inherits 3DGS ModelParams; render.py/metrics.py need test views",
+  },
+  "octree-gs": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "Octree-GS inherits Scaffold-GS ModelParams; render.py/metrics.py need test views",
+  },
+  "lightgaussian": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "LightGaussian keeps the original 3DGS train.py CLI; metrics.py needs test renders",
+  },
+  "mini-splatting": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "Mini-Splatting train.py takes --eval plus --imp_metric indoor/outdoor",
+  },
+  "eagles": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "",
+    "cli_supports_eval": False,
+    "reason": "EAGLES train_eval.py trains and evaluates in one run; no --eval flag (hydra config controls splits)",
+  },
+  "gaussianspa": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "GaussianSpa train_op.py keeps 3DGS ModelParams; metrics.py needs test renders",
+  },
+  "rdo-gaussian": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "--eval",
+    "cli_supports_eval": True,
+    "reason": "RDO-Gaussian train.py keeps 3DGS ModelParams; metrics.py needs test renders",
+  },
+  "sog": {
+    "needs_eval_for_metrics": True,
+    "train_eval_arg": "",
+    "cli_supports_eval": False,
+    "reason": "SOG uses a hydra config (dataset.eval defaults to true); no --eval flag on the CLI",
+  },
 }
 
 

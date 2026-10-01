@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR))
 
-from web.server import api_server, remote_executor
+from web.server import adapter_registry, api_server, remote_executor
 from web.server.remote_executor import (
   RemoteExecutionError,
   _build_remote_download_plan,
@@ -1351,6 +1351,75 @@ def test_remote_monitor_retries_transient_poll_errors() -> None:
   assert any("transient error" in line for line in logs)
 
 
+def test_survey_algorithm_adapters_contract() -> None:
+  config_path = Path(api_server.WEB_DIR) / "config" / "algorithm_adapters.json"
+  config = json.loads(config_path.read_text(encoding="utf-8"))
+  adapters = {item["family"]: item for item in config["adapters"]}
+
+  expected = {
+    "vanilla-3dgs": ("../gaussian-splatting-main", "train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"),
+    "hac": ("../HAC-main", "train.py -s {workspace} --eval -m {output_dir} --iterations {iterations}"),
+    "taming3dgs": ("../taming-3dgs-main", "train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"),
+    "octree-gs": ("../Octree-GS-main", "train.py --eval -s {workspace} -m {output_dir} --iterations {iterations}"),
+    "lightgaussian": ("../LightGaussian-main", "prune_finetune.py -s {workspace} -m {output_dir} --eval --start_checkpoint {checkpoint_path}"),
+    "mini-splatting": ("../Mini-Splatting-main", "ms/train.py -s {workspace} -m {output_dir} --eval --imp_metric outdoor"),
+    "eagles": ("../EAGLES-main", "train_eval.py --config configs/efficient-3dgs.yaml -s {workspace} -m {output_dir}"),
+    "gaussianspa": ("../GaussianSpa-main", "train_op.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"),
+    "rdo-gaussian": ("../RDO-Gaussian-main", "train.py -s {workspace} -m {output_dir} --eval --iterations {iterations}"),
+    "sog": ("../Self-Organizing-Gaussians-main", "train.py --config-name ours_q_sh_local_test hydra.run.dir={output_dir} dataset.source_path={workspace} optimization.iterations={iterations} run.no_progress_bar=false"),
+    "compressed-3dgs": ("../c3dgs-main", "compress.py -m {input_path} --data_device cuda --output_vq {output_dir}"),
+  }
+  for family, (repo_path, train_fragment) in expected.items():
+    adapter = adapters[family]
+    assert adapter["repo_path"] == repo_path, family
+    assert adapter["default_cwd"] == repo_path, family
+    template = adapter["operations"]["train" if family != "compressed-3dgs" else "compress"]["template"]
+    assert train_fragment in template, (family, template)
+
+  # every adapter that runs remote commands must be ready (repo_path set)
+  registry = adapter_registry.load_adapter_registry()
+  exec_ops = {"train", "render", "metrics", "compress", "decompress", "encode", "decode"}
+  for family, adapter in registry.items():
+    validation = adapter_registry.validate_adapter(adapter)
+    enabled = {name for name, cfg in adapter.get("operations", {}).items() if cfg.get("enabled")}
+    if enabled & exec_ops:
+      assert validation["is_ready"], f"{family} has execution ops but is_ready=false"
+      assert adapter.get("repo_path"), f"{family} missing repo_path"
+
+  # documented no-code placeholders: disabled ops + note, never ready
+  for family in ("hemgs", "mesongs", "codecgs"):
+    adapter = registry[family]
+    validation = adapter_registry.validate_adapter(adapter)
+    assert not validation["is_ready"], family
+    assert not (set(validation["operations"]) & exec_ops), family
+    assert "o public code" in adapter.get("notes", "") or "no code" in adapter.get("notes", "").lower(), family
+
+  # eval requirements cover every newly wired training family (encoder excluded)
+  for family in expected:
+    if family == "compressed-3dgs":
+      continue
+    assert family in remote_executor.ALGORITHM_EVAL_REQUIREMENTS, family
+
+  # smoke: every enabled templated operation renders with fake args
+  fake_args = {
+    "input_path": "/remote/model/scene",
+    "output_dir": "/remote/output/run",
+    "workspace": "/remote/dataset/workspace",
+    "checkpoint_path": "/remote/chk/30000",
+    "repo_path": "/remote/repo",
+    **api_server._training_format_args({}),
+  }
+  for family, adapter in registry.items():
+    for op_name, op_cfg in adapter.get("operations", {}).items():
+      if not op_cfg.get("enabled") or not op_cfg.get("template"):
+        continue
+      command = api_server.format_operation_command(adapter, op_name, training_args=fake_args, **{
+        k: fake_args[k] for k in ("input_path", "output_dir", "workspace", "checkpoint_path", "repo_path")
+      })
+      assert command, f"{family}/{op_name} rendered empty"
+      assert "{" not in command or "}" not in command, f"{family}/{op_name} unresolved: {command}"
+
+
 def main() -> None:
   test_detached_script_contract()
   test_remote_run_key_conflict_appends_job_prefix()
@@ -1367,6 +1436,7 @@ def main() -> None:
   test_training_eval_arg_injection_is_family_aware()
   test_reduced_3dgs_post_train_cfg_args_contract()
   test_atomgs_gaussianpro_adapters_and_post_train_contract()
+  test_survey_algorithm_adapters_contract()
   test_ply_header_classifier_selects_viewer_format()
   test_gaussian_splatting_lightning_prefers_exported_gaussian_ply()
   test_gaussian_splatting_lightning_finds_nested_existing_dataset_output()

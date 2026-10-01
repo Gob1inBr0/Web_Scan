@@ -120,6 +120,72 @@ LOCAL_RESULT_PROJECTS = [
     "root": ROOT_DIR / "AtomGS-main",
     "representation": "sh",
   },
+  {
+    "family": "vanilla-3dgs",
+    "label": "3DGS (30K baseline)",
+    "root": ROOT_DIR / "gaussian-splatting-main",
+    "representation": "sh",
+  },
+  {
+    "family": "hac",
+    "label": "HAC",
+    "root": ROOT_DIR / "HAC-main",
+    "representation": "sh",
+  },
+  {
+    "family": "taming3dgs",
+    "label": "Taming3DGS",
+    "root": ROOT_DIR / "taming-3dgs-main",
+    "representation": "sh",
+  },
+  {
+    "family": "octree-gs",
+    "label": "Octree-GS",
+    "root": ROOT_DIR / "Octree-GS-main",
+    "representation": "sh",
+  },
+  {
+    "family": "lightgaussian",
+    "label": "LightGaussian",
+    "root": ROOT_DIR / "LightGaussian-main",
+    "representation": "sh",
+  },
+  {
+    "family": "mini-splatting",
+    "label": "Mini-Splatting",
+    "root": ROOT_DIR / "Mini-Splatting-main",
+    "representation": "sh",
+  },
+  {
+    "family": "eagles",
+    "label": "EAGLES",
+    "root": ROOT_DIR / "EAGLES-main",
+    "representation": "sh",
+  },
+  {
+    "family": "gaussianspa",
+    "label": "GaussianSpa",
+    "root": ROOT_DIR / "GaussianSpa-main",
+    "representation": "sh",
+  },
+  {
+    "family": "rdo-gaussian",
+    "label": "RDO-Gaussian",
+    "root": ROOT_DIR / "RDO-Gaussian-main",
+    "representation": "sh",
+  },
+  {
+    "family": "sog",
+    "label": "Self-Organizing Gaussians",
+    "root": ROOT_DIR / "Self-Organizing-Gaussians-main",
+    "representation": "sh",
+  },
+  {
+    "family": "compressed-3dgs",
+    "label": "Compressed 3DGS (c3dgs)",
+    "root": ROOT_DIR / "c3dgs-main",
+    "representation": "sh",
+  },
 ]
 
 

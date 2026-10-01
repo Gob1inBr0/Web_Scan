@@ -47,6 +47,8 @@ function newDraft() {
     remoteDatasetPath: "",
     autoColmap: true,
     // -- algorithm --
+    operationType: "train", // "train" | "compress"
+    compressInputPath: "",
     family: "",
     iterations: 30000,
     preset: "standard",
@@ -72,10 +74,15 @@ export default {
     onMounted(async () => {
       try {
         const data = await getAlgorithms();
-        algorithms.value = (data.algorithms || []).filter(
-          (a) => a.operations && a.operations.train && a.operations.train.enabled,
+        const readiness = new Map(
+          (data.validation || []).map((v) => [v.family, v]),
         );
-        if (!draft.family && algorithms.value.length) draft.family = algorithms.value[0].family;
+        algorithms.value = (data.algorithms || []).map((a) => ({
+          ...a,
+          ready: readiness.get(a.family)?.is_ready !== false,
+          warnings: readiness.get(a.family)?.warnings || [],
+        }));
+        syncFamilyToOperation();
       } catch (err) {
         toast(`${t("wiz.algorithmsFailed")}: ${err.message}`, "error");
       } finally {
@@ -83,12 +90,38 @@ export default {
       }
     });
 
-    const trainable = computed(() => algorithms.value);
+    const trainable = computed(() => algorithms.value.filter((a) => {
+      if (draft.operationType === "compress") {
+        return Boolean((a.operations.compress && a.operations.compress.enabled) || (a.operations.encode && a.operations.encode.enabled));
+      }
+      return Boolean(a.operations.train && a.operations.train.enabled);
+    }));
     const selectedAlgorithm = computed(() => trainable.value.find((a) => a.family === draft.family) || null);
+    const selectedAlgorithmWarnings = computed(() => selectedAlgorithm.value?.warnings || []);
+
+    // The compress mode submits whatever operation the adapter actually exposes.
+    const resolvedOperation = computed(() => {
+      if (draft.operationType !== "compress") return "train";
+      const ops = selectedAlgorithm.value?.operations || {};
+      if (ops.compress && ops.compress.enabled) return "compress";
+      if (ops.encode && ops.encode.enabled) return "encode";
+      return "compress";
+    });
+
+    function syncFamilyToOperation() {
+      const firstReady = trainable.value.find((a) => a.ready);
+      if (firstReady && !trainable.value.find((a) => a.family === draft.family)?.ready) {
+        draft.family = firstReady.family;
+      }
+      if (!draft.family && firstReady) draft.family = firstReady.family;
+    }
+
+    watch(() => draft.operationType, () => syncFamilyToOperation());
     const profile = computed(() => activeProfile());
 
     const canNext = computed(() => {
       if (draft.step === 1) {
+        if (draft.operationType === "compress") return draft.compressInputPath.trim().length > 0;
         if (draft.source === "upload") return draft.materialized !== null;
         return Boolean(draft.selectedRemoteDatasetId || draft.remoteDatasetPath.trim());
       }
@@ -178,6 +211,10 @@ export default {
 
     async function goNext() {
       if (draft.step === 1) {
+        if (draft.operationType === "compress") {
+          draft.step = 2;
+          return;
+        }
         if (draft.source === "upload" && !draft.materialized) {
           try {
             await uploadAndMaterialize();
@@ -190,7 +227,7 @@ export default {
       }
       if (draft.step === 2) {
         if (!draft.runLabel.trim()) {
-          draft.runLabel = `${draft.source === "upload" ? draft.datasetName : draft.selectedRemoteDatasetId || "remote"}-${draft.family}-${new Date().toISOString().slice(5, 16).replace("T", "-")}`;
+          draft.runLabel = `${draft.operationType === "compress" ? "compress" : draft.source === "upload" ? draft.datasetName : draft.selectedRemoteDatasetId || "remote"}-${draft.family}-${new Date().toISOString().slice(5, 16).replace("T", "-")}`;
         }
         draft.step = 3;
         submitAll();
@@ -211,8 +248,8 @@ export default {
           remote: remoteConfig(),
           timeout_seconds: 20,
           algorithm_family: draft.family,
-          use_existing_remote_dataset: draft.source === "remote",
-          check_colmap_required: draft.source === "upload" && draft.autoColmap,
+          use_existing_remote_dataset: draft.operationType !== "compress" && draft.source === "remote",
+          check_colmap_required: draft.operationType !== "compress" && draft.source === "upload" && draft.autoColmap,
         });
         draft.precheckResult = check.result || {};
         if (check.result?.checks?.some((c) => c.required && !c.ok)) {
@@ -240,21 +277,22 @@ export default {
         lmbda: draft.lmbda,
         voxel_size: draft.voxel_size,
       };
+      const isCompress = draft.operationType === "compress";
       return {
         algorithm_family: draft.family,
-        operation: "train",
+        operation: resolvedOperation.value,
         session_id: draft.sessionId,
         capture_id: draft.captureId,
         dataset_name: draft.datasetName.trim() || draft.runLabel,
-        auto_materialize: draft.source === "upload",
-        auto_colmap: draft.autoColmap,
-        use_existing_remote_dataset: draft.source === "remote",
-        remote_dataset_id: draft.selectedRemoteDatasetId || "",
-        remote_dataset_path: draft.remoteDatasetPath.trim(),
+        auto_materialize: !isCompress && draft.source === "upload",
+        auto_colmap: !isCompress && draft.autoColmap,
+        use_existing_remote_dataset: !isCompress && draft.source === "remote",
+        remote_dataset_id: isCompress ? "" : (draft.selectedRemoteDatasetId || ""),
+        remote_dataset_path: isCompress ? "" : draft.remoteDatasetPath.trim(),
         workspace: "",
         output_dir: "",
         checkpoint_path: draft.checkpointPath.trim(),
-        input_path: "",
+        input_path: isCompress ? draft.compressInputPath.trim() : "",
         preview_job_id: "",
         remote: remoteConfig(),
         require_remote_check: true,
@@ -315,7 +353,8 @@ export default {
     }
 
     return {
-      draft, algorithms, loadingAlgorithms, trainable, selectedAlgorithm, profile,
+      draft, algorithms, loadingAlgorithms, trainable, selectedAlgorithm, selectedAlgorithmWarnings,
+      resolvedOperation, profile,
       canNext, uploadLabel, addFiles, onDrop, pickRemoteDatasets, goNext,
       submitAll, confirmSubmit, applyPreset, PRESETS, TRAINING_DEFAULTS,
       quickSsh, quickConnect, hasPassword,
@@ -339,6 +378,24 @@ export default {
 
       <!-- STEP 1: DATA -->
       <ui-card v-if="draft.step === 1" :title="$t('wiz.chooseData')">
+        <div class="grid-2" style="margin-bottom:16px">
+          <button class="choice" :class="{ selected: draft.operationType === 'train' }" @click="draft.operationType = 'train'">
+            <div class="choice-title"><icon name="zap"></icon> {{ $t("wiz.opTrain") }}</div>
+            <div class="choice-desc">{{ $t("wiz.opTrainHint") }}</div>
+          </button>
+          <button class="choice" :class="{ selected: draft.operationType === 'compress' }" @click="draft.operationType = 'compress'">
+            <div class="choice-title"><icon name="box"></icon> {{ $t("wiz.opCompress") }}</div>
+            <div class="choice-desc">{{ $t("wiz.opCompressHint") }}</div>
+          </button>
+        </div>
+
+        <template v-if="draft.operationType === 'compress'">
+          <ui-field :label="$t('wiz.compressInput')" :hint="$t('wiz.compressInputHint')">
+            <input class="input mono" v-model="draft.compressInputPath" placeholder="/root/autodl-tmp/…/output/scene/30000" />
+          </ui-field>
+        </template>
+
+        <template v-else>
         <div class="grid-2" style="margin-bottom:16px">
           <button class="choice" :class="{ selected: draft.source === 'upload' }" @click="draft.source = 'upload'">
             <div class="choice-title"><icon name="upload"></icon> {{ $t("wiz.uploadNew") }}</div>
@@ -409,6 +466,7 @@ export default {
             </ui-field>
           </div>
         </template>
+        </template>
 
         <div class="row" style="justify-content:flex-end;margin-top:20px">
           <ui-button variant="primary" :disabled="!canNext" :loading="draft.uploading"
@@ -422,17 +480,26 @@ export default {
       <!-- STEP 2: ALGORITHM -->
       <ui-card v-if="draft.step === 2" :title="$t('wiz.pickAlgorithm')">
         <div class="grid-2">
-          <ui-field :label="$t('wiz.algorithm')" :hint="$t('wiz.algorithmHint')">
+          <ui-field :label="$t('wiz.algorithm')" :hint="draft.operationType === 'compress' ? $t('wiz.algorithmCompressHint') : $t('wiz.algorithmHint')">
             <select class="select" v-model="draft.family">
-              <option v-for="a in trainable" :key="a.family" :value="a.family">{{ a.label || a.family }}</option>
+              <option v-for="a in trainable" :key="a.family" :value="a.family" :disabled="!a.ready">
+                {{ a.label || a.family }}{{ a.ready ? "" : " — " + $t("wiz.algorithmNotReady") }}
+              </option>
             </select>
+            <div v-if="selectedAlgorithm && !selectedAlgorithm.ready" class="small warn-text" style="margin-top:6px">
+              {{ $t("wiz.algorithmNotReadyHint") }}
+            </div>
           </ui-field>
           <ui-field :label="$t('wiz.runName')" :hint="$t('wiz.runNameHint')">
             <input class="input" v-model="draft.runLabel" :placeholder="$t('wiz.runNamePlaceholder')" />
           </ui-field>
         </div>
 
-        <div class="grid-3" style="margin-top:16px">
+        <div v-if="draft.operationType === 'compress'" class="small muted" style="margin-top:4px">
+          {{ $t("wiz.compressOpLabel") }}: <span class="mono">{{ resolvedOperation }}</span>
+        </div>
+
+        <div v-if="draft.operationType !== 'compress'" class="grid-3" style="margin-top:16px">
           <button v-for="preset in PRESETS" :key="preset.id" class="choice" :class="{ selected: draft.preset === preset.id }"
                   style="padding:12px 14px" @click="applyPreset(preset.id)">
             <div class="choice-title" style="font-size:var(--fs-sm)">{{ $t(preset.labelKey) }}</div>

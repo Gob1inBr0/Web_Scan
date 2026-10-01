@@ -41,6 +41,30 @@
 !/reduced-3dgs-main/
 !/reduced-3dgs-main/setup_env.sh
 
+# 2026-10 survey 接入：新算法的 setup_env.sh
+!/HAC-main/
+!/HAC-main/setup_env.sh
+!/taming-3dgs-main/
+!/taming-3dgs-main/setup_env.sh
+!/Octree-GS-main/
+!/Octree-GS-main/setup_env.sh
+!/LightGaussian-main/
+!/LightGaussian-main/setup_env.sh
+!/Mini-Splatting-main/
+!/Mini-Splatting-main/setup_env.sh
+!/EAGLES-main/
+!/EAGLES-main/setup_env.sh
+!/GaussianSpa-main/
+!/GaussianSpa-main/setup_env.sh
+!/RDO-Gaussian-main/
+!/RDO-Gaussian-main/setup_env.sh
+!/gaussian-splatting-main/
+!/gaussian-splatting-main/setup_env.sh
+!/Self-Organizing-Gaussians-main/
+!/Self-Organizing-Gaussians-main/setup_env.sh
+!/c3dgs-main/
+!/c3dgs-main/setup_env.sh
+
 # 忽略 web 里的数据、缓存、日志和备份
 /web/_backup/
 /web/generated/
